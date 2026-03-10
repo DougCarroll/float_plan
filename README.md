@@ -2,20 +2,28 @@
 
 Fill the USCG float plan PDF from saved vessel and crew data, plus an itinerary.
 
+Runs on **macOS**, **Linux**, and **Windows** (Python 3.10+ with tkinter).
+
 ## Run
+
+**macOS / Linux:**
 
 ```bash
 ./run.sh
 ```
 
-This updates the virtual environment (pip upgrade, install dependencies, audit) and then starts the app.
+**Windows (Command Prompt or PowerShell):**
 
-`ensure_env.sh` will:
+```cmd
+run.bat
+```
 
-- Create `.venv` if it doesn’t exist  
-- Upgrade pip  
-- Install/update packages from `requirements.txt`  
-- Run `pip audit` (or `pip check` if audit isn’t available)
+Or run Python directly after setting up the venv once:
+
+- macOS/Linux: `python3 -m venv .venv` then `.venv/bin/pip install -r requirements.txt` and `.venv/bin/python app.py`
+- Windows: `python -m venv .venv` then `.venv\Scripts\pip install -r requirements.txt` and `.venv\Scripts\python app.py`
+
+The run scripts create `.venv` if needed, upgrade pip, install dependencies, and start the app. On Unix, `ensure_env.sh` also runs `pip audit` (or `pip check`).
 
 ## Usage
 
@@ -24,7 +32,7 @@ This updates the virtual environment (pip upgrade, install dependencies, audit) 
 3. **Itinerary** – **Set departure** (date, time, location, mode), then **Add arrival / next leg** for each stop (arrival + next departure). Remove legs with **Remove leg**.
 4. **Generate PDF…** – Saves a filled copy of `USCGFloatPlan.pdf` for the onshore support team.
 
-Data is stored in the `data/` directory as `vessels.json` and `crews.json`.
+Data is stored in the `data/` directory as `vessels.json` and `crew_members.json`.
 
 ## Template
 
