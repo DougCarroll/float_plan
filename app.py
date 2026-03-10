@@ -219,6 +219,7 @@ class FloatPlanApp:
         btn_row.grid(row=17, column=0, columnspan=4, pady=16)
         ttk.Button(btn_row, text="Save plan…", command=self._save_plan).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text="Open plan…", command=self._open_plan).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="Summary…", command=self._show_summary).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text="Generate PDF…", command=self._generate_pdf).pack(side=tk.LEFT)
 
         main.columnconfigure(1, weight=1)
@@ -853,6 +854,82 @@ class FloatPlanApp:
             _tk_alert(self.root, "Saved", f"Plan saved to {path}")
         except Exception as e:
             _tk_alert(self.root, "Error", str(e))
+
+    def _show_summary(self):
+        """Build text summary of the float plan and itinerary for copying into an email."""
+        self._on_contact_changed()
+        for i, v in self._on_board_vars.items():
+            if v.get():
+                self.on_board_indices.add(i)
+            else:
+                self.on_board_indices.discard(i)
+        lines = ["FLOAT PLAN SUMMARY", ""]
+        vessel_name = (self.vessel.get("name") or self.vessel.get("id_vessel_name") or "").strip()
+        if vessel_name == "(No vessel selected)":
+            vessel_name = ""
+        if vessel_name:
+            lines.append(f"Vessel: {vessel_name}")
+            home = (self.vessel.get("id_home_port") or "").strip()
+            if home:
+                lines.append(f"Home port: {home}")
+            lines.append("")
+        if self.selected_operator_index is not None and 0 <= self.selected_operator_index < len(self.crew_members):
+            op = self.crew_members[self.selected_operator_index]
+            lines.append(f"Operator: {(op.get('name') or '').strip()}")
+            if (op.get("home_phone") or "").strip():
+                lines.append(f"  Phone: {(op.get('home_phone') or '').strip()}")
+            lines.append("")
+        on_board_names = []
+        for i in sorted(self.on_board_indices):
+            if i != self.selected_operator_index and 0 <= i < len(self.crew_members):
+                name = (self.crew_members[i].get("name") or "").strip()
+                if name and name not in on_board_names:
+                    on_board_names.append(name)
+        if on_board_names:
+            lines.append("Crew on board: " + ", ".join(on_board_names))
+            lines.append("")
+        if self.itinerary:
+            lines.append("ITINERARY")
+            for i, leg in enumerate(self.itinerary):
+                dep = f"Depart: {leg.get('depart_date', '')} {leg.get('depart_time', '')} from {leg.get('depart_location', '')} ({leg.get('depart_mode', '')})"
+                lines.append(f"  {i + 1}. {dep.strip()}")
+                if leg.get("arrive_date") or leg.get("arrive_location"):
+                    arr = f"    Arrive: {leg.get('arrive_date', '')} {leg.get('arrive_time', '')} at {leg.get('arrive_location', '')}"
+                    if leg.get("arrive_reason"):
+                        arr += f" — {leg.get('arrive_reason')}"
+                    lines.append(arr.strip())
+            lines.append("")
+        if self.rescue_authority or self.rescue_authority_phone:
+            lines.append(f"Rescue authority: {self.rescue_authority or '—'}")
+            if self.rescue_authority_phone:
+                lines.append(f"  Phone: {self.rescue_authority_phone}")
+            lines.append("")
+        if self.contact1 or self.contact1_phone:
+            lines.append(f"Contact 1: {self.contact1 or '—'} {self.contact1_phone or ''}".strip())
+        if self.contact2 or self.contact2_phone:
+            lines.append(f"Contact 2: {self.contact2 or '—'} {self.contact2_phone or ''}".strip())
+        text = "\n".join(lines).strip()
+        if not text:
+            text = "No plan details to summarize. Add a vessel, operator, and/or itinerary."
+        top = tk.Toplevel(self.root)
+        top.title("Summary — copy for email")
+        top.transient(self.root)
+        top.minsize(420, 320)
+        top.geometry("500x400")
+        f = ttk.Frame(top, padding=10)
+        f.pack(fill=tk.BOTH, expand=True)
+        txt = tk.Text(f, wrap=tk.WORD, font=("TkDefaultFont", 10), padx=8, pady=8)
+        txt.pack(fill=tk.BOTH, expand=True)
+        txt.insert(tk.END, text)
+        txt.config(state=tk.DISABLED)
+        btn_f = ttk.Frame(f)
+        btn_f.pack(fill=tk.X, pady=(8, 0))
+        def copy_all():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.root.update()
+        ttk.Button(btn_f, text="Copy to clipboard", command=copy_all).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_f, text="Close", command=top.destroy).pack(side=tk.LEFT)
 
     def _open_plan(self):
         """Load a saved .floatplan file using the native file dialog."""
