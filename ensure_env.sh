@@ -5,7 +5,34 @@ cd "$(dirname "$0")"
 
 if [[ ! -d .venv ]]; then
   echo "Creating virtual environment..."
-  python3 -m venv .venv
+  # Prefer Homebrew Python 3.12 on macOS so Tk is 8.6.13+ (fixes click issues)
+  PYTHON=
+  if [[ "$(uname -s)" == Darwin ]]; then
+    BREW_PREFIX=
+    for brew_cmd in brew /usr/local/bin/brew /opt/homebrew/bin/brew; do
+      if command -v "$brew_cmd" &>/dev/null && BREW_PREFIX=$("$brew_cmd" --prefix 2>/dev/null); then
+        [[ -n "$BREW_PREFIX" ]] && break
+      fi
+    done
+    if [[ -n "$BREW_PREFIX" && -x "$BREW_PREFIX/opt/python@3.12/libexec/bin/python3.12" ]]; then
+      PYTHON=$BREW_PREFIX/opt/python@3.12/libexec/bin/python3.12
+    elif [[ -x "$BREW_PREFIX/bin/python3.12" ]]; then
+      PYTHON=$BREW_PREFIX/bin/python3.12
+    elif [[ -x /usr/local/opt/python@3.12/libexec/bin/python3.12 ]]; then
+      PYTHON=/usr/local/opt/python@3.12/libexec/bin/python3.12
+    elif [[ -x /usr/local/bin/python3.12 ]]; then
+      PYTHON=/usr/local/bin/python3.12
+    elif [[ -x /opt/homebrew/opt/python@3.12/libexec/bin/python3.12 ]]; then
+      PYTHON=/opt/homebrew/opt/python@3.12/libexec/bin/python3.12
+    elif [[ -x /opt/homebrew/bin/python3.12 ]]; then
+      PYTHON=/opt/homebrew/bin/python3.12
+    fi
+  fi
+  if [[ -z "$PYTHON" ]]; then
+    PYTHON=python3
+  fi
+  echo "Using: $PYTHON"
+  "$PYTHON" -m venv .venv
 fi
 
 echo "Upgrading pip..."

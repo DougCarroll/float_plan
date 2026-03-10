@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import platform
+import sys
 import tkinter as tk
 from datetime import datetime
 from tkinter import ttk, filedialog
@@ -22,6 +24,76 @@ from rescue_authorities import RCC_NAMES, RCC_PHONE_BY_NAME
 
 DATA_DIR = Path(__file__).resolve().parent
 TEMPLATE_PDF = DATA_DIR / "USCGFloatPlan.pdf"
+
+
+def _normalize_date_string(s: str) -> str:
+    """Zero-pad month/day so strptime can parse (e.g. 3/3/2025 -> 03/03/2025, 2025-3-3 -> 2025-03-03)."""
+    s = s.strip()
+    # Slash: assume m/d/y
+    if "/" in s:
+        parts = s.split("/", 2)
+        if len(parts) == 3:
+            a, b, c = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            if a.isdigit() and b.isdigit() and c.isdigit() and len(c) in (2, 4):
+                if len(a) == 1:
+                    a = "0" + a
+                if len(b) == 1:
+                    b = "0" + b
+                return f"{a}/{b}/{c}"
+    # Hyphen: YYYY-M-D or M-D-YYYY
+    if "-" in s:
+        parts = s.split("-", 2)
+        if len(parts) == 3:
+            a, b, c = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            if a.isdigit() and b.isdigit() and c.isdigit():
+                if len(a) == 4:  # YYYY-M-D
+                    if len(b) == 1:
+                        b = "0" + b
+                    if len(c) == 1:
+                        c = "0" + c
+                    return f"{a}-{b}-{c}"
+                if len(c) in (2, 4):  # M-D-YYYY or M-D-YY
+                    if len(a) == 1:
+                        a = "0" + a
+                    if len(b) == 1:
+                        b = "0" + b
+                    return f"{a}-{b}-{c}"
+    # 8-digit MMDDYYYY (e.g. 03032026 -> March 3, 2026)
+    if len(s) == 8 and s.isdigit():
+        return f"{s[0:2]}/{s[2:4]}/{s[4:8]}"
+    return s
+
+
+def _format_date_for_summary(s: str) -> str:
+    """Format date string as 'DayOfWeek, Month Nth' (e.g. Wednesday, March 3rd). Used only in summary. Returns original if unparseable."""
+    if not s or not str(s).strip():
+        return ""
+    raw = str(s).strip()
+    normalized = _normalize_date_string(raw)
+    for candidate in (normalized, raw):
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%B %d, %Y", "%B %d", "%b %d, %Y", "%b %d"):
+            try:
+                d = datetime.strptime(candidate, fmt)
+                day = d.day
+                suffix = "th" if 11 <= day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+                return f"{d.strftime('%A, %B')} {day}{suffix}"
+            except ValueError:
+                continue
+    return raw
+
+
+def _format_time_for_summary(s: str) -> str:
+    """Format time as 24-hour 4 digits (e.g. 0800, 1600). Returns original if unparseable."""
+    if not s or not str(s).strip():
+        return ""
+    s = str(s).strip()
+    for fmt in ("%H:%M", "%I:%M %p", "%I:%M%p", "%H:%M:%S"):
+        try:
+            t = datetime.strptime(s, fmt)
+            return f"{t.hour:02d}{t.minute:02d}"
+        except ValueError:
+            continue
+    return s
 
 
 def _tk_alert(root: tk.Tk | tk.Toplevel, title: str, message: str) -> None:
@@ -124,9 +196,17 @@ class FloatPlanApp:
         self.operator_has_vessel_experience = False
         self.operator_has_area_experience = False
         self._build_ui()
+        # macOS Tk: first click often doesn't register; lift + topmost + focus_force can help.
+        self.root.bind("<Map>", lambda e: self.root.focus_force())
         self.root.lift()
         self.root.attributes("-topmost", True)
-        self.root.after(1000, lambda: self.root.attributes("-topmost", False))
+        self.root.after(100, self.root.focus_force)
+        self.root.after(1000, self._after_topmost)
+
+    def _after_topmost(self) -> None:
+        """Clear topmost and force focus (macOS Tk workaround)."""
+        self.root.attributes("-topmost", False)
+        self.root.focus_force()
 
     def _build_ui(self):
         main = ttk.Frame(self.root, padding=10)
@@ -220,7 +300,8 @@ class FloatPlanApp:
         ttk.Button(btn_row, text="Save plan…", command=self._save_plan).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text="Open plan…", command=self._open_plan).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text="Summary…", command=self._show_summary).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btn_row, text="Generate PDF…", command=self._generate_pdf).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text="Generate PDF…", command=self._generate_pdf).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="Close", command=self.root.destroy).pack(side=tk.LEFT)
 
         main.columnconfigure(1, weight=1)
         self.root.columnconfigure(0, weight=1)
@@ -787,24 +868,24 @@ class FloatPlanApp:
         ttk.Button(btn_f, text="Cancel", command=win.destroy).pack(side=tk.LEFT)
 
     def _remove_leg(self):
-        i = self.itinerary_list.curselection()
-        if not i:
+        sel = self.itinerary_list.curselection()
+        if not sel:
             _tk_alert(self.root, "Remove", "Select a leg to remove.")
             return
-        idx = int(i[0])
-        if 0 <= idx < len(self.itinerary):
-            self.itinerary.pop(idx)
+        # Two list lines per leg (Depart, Arrive) so leg index = list index // 2
+        list_idx = int(sel[0])
+        leg_idx = list_idx // 2
+        if 0 <= leg_idx < len(self.itinerary):
+            self.itinerary.pop(leg_idx)
             self._refresh_itinerary_display()
 
     def _refresh_itinerary_display(self):
         self.itinerary_list.delete(0, tk.END)
-        for i, leg in enumerate(self.itinerary):
+        for leg in self.itinerary:
             dep = f"Depart: {leg.get('depart_date')} {leg.get('depart_time')} @ {leg.get('depart_location')} ({leg.get('depart_mode')})"
             arr = f"Arrive: {leg.get('arrive_date')} {leg.get('arrive_time')} @ {leg.get('arrive_location')}" + (f" — {leg.get('arrive_reason')}" if leg.get('arrive_reason') else "")
-            if leg.get('arrive_date') or leg.get('arrive_location'):
-                self.itinerary_list.insert(tk.END, f"{dep} → {arr}")
-            else:
-                self.itinerary_list.insert(tk.END, dep)
+            self.itinerary_list.insert(tk.END, dep)
+            self.itinerary_list.insert(tk.END, arr)
 
     def _save_plan(self):
         """Save current plan state to a .floatplan JSON file for later edit."""
@@ -863,7 +944,12 @@ class FloatPlanApp:
                 self.on_board_indices.add(i)
             else:
                 self.on_board_indices.discard(i)
-        lines = ["FLOAT PLAN SUMMARY", ""]
+        lines = ["FLOAT PLAN SUMMARY"]
+        if self.itinerary:
+            first_dep = (self.itinerary[0].get("depart_location") or "").strip() or "—"
+            last_arr = (self.itinerary[-1].get("arrive_location") or "").strip() or "—"
+            lines.append(f"{first_dep} to {last_arr}")
+        lines.append("")
         vessel_name = (self.vessel.get("name") or self.vessel.get("id_vessel_name") or "").strip()
         if vessel_name == "(No vessel selected)":
             vessel_name = ""
@@ -888,27 +974,48 @@ class FloatPlanApp:
         if on_board_names:
             lines.append("Crew on board: " + ", ".join(on_board_names))
             lines.append("")
+        itinerary_plain_lines = []
+        itinerary_display_parts = []
         if self.itinerary:
-            lines.append("ITINERARY")
+            itinerary_plain_lines.append("ITINERARY")
+            itinerary_plain_lines.append("")
             for i, leg in enumerate(self.itinerary):
-                dep = f"Depart: {leg.get('depart_date', '')} {leg.get('depart_time', '')} from {leg.get('depart_location', '')} ({leg.get('depart_mode', '')})"
-                lines.append(f"  {i + 1}. {dep.strip()}")
-                if leg.get("arrive_date") or leg.get("arrive_location"):
-                    arr = f"    Arrive: {leg.get('arrive_date', '')} {leg.get('arrive_time', '')} at {leg.get('arrive_location', '')}"
-                    if leg.get("arrive_reason"):
-                        arr += f" — {leg.get('arrive_reason')}"
-                    lines.append(arr.strip())
-            lines.append("")
+                dep_date = _format_date_for_summary(leg.get("depart_date", "") or "")
+                dep_time = _format_time_for_summary(leg.get("depart_time", "") or "") or (leg.get("depart_time", "") or "").strip()
+                dep_loc = (leg.get("depart_location", "") or "").strip() or "—"
+                arr_date = _format_date_for_summary(leg.get("arrive_date", "") or "")
+                arr_time = _format_time_for_summary(leg.get("arrive_time", "") or "") or (leg.get("arrive_time", "") or "").strip()
+                arr_loc = (leg.get("arrive_location", "") or "").strip() or "—"
+                at_dep = f", at {dep_time}," if dep_time else ","
+                at_arr = f" at {arr_time}." if arr_time else "."
+                sentence = f"{dep_date}{at_dep} depart {dep_loc} heading to {arr_loc}, expecting arrival on {arr_date}{at_arr}"
+                if i > 0:
+                    itinerary_plain_lines.append("")
+                    itinerary_display_parts.append(("\n\n", False))
+                itinerary_plain_lines.append(sentence)
+                prefix = f"{dep_date}{at_dep} depart "
+                mid = " heading to "
+                suffix = f", expecting arrival on {arr_date}{at_arr}"
+                itinerary_display_parts.append((prefix, False))
+                itinerary_display_parts.append((dep_loc, True))
+                itinerary_display_parts.append((mid, False))
+                itinerary_display_parts.append((arr_loc, True))
+                itinerary_display_parts.append((suffix, False))
+            itinerary_plain_lines.append("")
+            itinerary_display_parts.append(("\n", False))
+        full_lines = list(lines)
+        if itinerary_plain_lines:
+            full_lines.extend(itinerary_plain_lines)
         if self.rescue_authority or self.rescue_authority_phone:
-            lines.append(f"Rescue authority: {self.rescue_authority or '—'}")
+            full_lines.append(f"Rescue authority: {self.rescue_authority or '—'}")
             if self.rescue_authority_phone:
-                lines.append(f"  Phone: {self.rescue_authority_phone}")
-            lines.append("")
+                full_lines.append(f"  Phone: {self.rescue_authority_phone}")
+            full_lines.append("")
         if self.contact1 or self.contact1_phone:
-            lines.append(f"Contact 1: {self.contact1 or '—'} {self.contact1_phone or ''}".strip())
+            full_lines.append(f"Contact 1: {self.contact1 or '—'} {self.contact1_phone or ''}".strip())
         if self.contact2 or self.contact2_phone:
-            lines.append(f"Contact 2: {self.contact2 or '—'} {self.contact2_phone or ''}".strip())
-        text = "\n".join(lines).strip()
+            full_lines.append(f"Contact 2: {self.contact2 or '—'} {self.contact2_phone or ''}".strip())
+        text = "\n".join(full_lines).strip()
         if not text:
             text = "No plan details to summarize. Add a vessel, operator, and/or itinerary."
         top = tk.Toplevel(self.root)
@@ -919,8 +1026,28 @@ class FloatPlanApp:
         f = ttk.Frame(top, padding=10)
         f.pack(fill=tk.BOTH, expand=True)
         txt = tk.Text(f, wrap=tk.WORD, font=("TkDefaultFont", 10), padx=8, pady=8)
+        txt.tag_configure("bold", font=("TkDefaultFont", 10, "bold"))
         txt.pack(fill=tk.BOTH, expand=True)
-        txt.insert(tk.END, text)
+        if not itinerary_display_parts:
+            txt.insert(tk.END, text)
+        else:
+            txt.insert(tk.END, "\n".join(lines) + "\n")
+            txt.insert(tk.END, "ITINERARY\n\n")
+            for part, is_bold in itinerary_display_parts:
+                start = txt.index(tk.END)
+                txt.insert(tk.END, part)
+                if is_bold:
+                    txt.tag_add("bold", start, tk.END)
+            txt.insert(tk.END, "\n")
+            if self.rescue_authority or self.rescue_authority_phone:
+                txt.insert(tk.END, f"Rescue authority: {self.rescue_authority or '—'}\n")
+                if self.rescue_authority_phone:
+                    txt.insert(tk.END, f"  Phone: {self.rescue_authority_phone}\n")
+                txt.insert(tk.END, "\n")
+            if self.contact1 or self.contact1_phone:
+                txt.insert(tk.END, f"Contact 1: {self.contact1 or '—'} {self.contact1_phone or ''}\n".strip() + "\n")
+            if self.contact2 or self.contact2_phone:
+                txt.insert(tk.END, f"Contact 2: {self.contact2 or '—'} {self.contact2_phone or ''}\n".strip())
         txt.config(state=tk.DISABLED)
         btn_f = ttk.Frame(f)
         btn_f.pack(fill=tk.X, pady=(8, 0))
@@ -1073,5 +1200,62 @@ class FloatPlanApp:
         self.root.mainloop()
 
 
+def _tk_update_instructions() -> str:
+    """Return OS-specific command(s) to update Python/Tk to 8.6.13+."""
+    system = platform.system()
+    if system == "Darwin":
+        return (
+            "  macOS (Homebrew) – your venv uses a different Python; use 3.12 + Tk then recreate venv:\n"
+            "    brew install python@3.12 python-tk@3.12\n"
+            "    rm -rf .venv && ./ensure_env.sh\n"
+            "  (ensure_env.sh will use Homebrew Python 3.12 if present.) Then: ./run.sh\n"
+            "  Or download Python 3.12+: https://www.python.org/downloads/"
+        )
+    if system == "Windows":
+        return (
+            "  Windows (winget):    winget install Python.Python.3.12\n"
+            "  Or download installer:    https://www.python.org/downloads/"
+        )
+    if system == "Linux":
+        return (
+            "  Debian/Ubuntu:        sudo apt install python3-tk\n"
+            "  Fedora/RHEL:          sudo dnf install python3-tkinter\n"
+            "  Or install Python 3.12 from your package manager or https://www.python.org/downloads/"
+        )
+    return "  Install Python 3.11.7+ or 3.12+ from https://www.python.org/downloads/"
+
+
+def _check_tk_version() -> bool:
+    """Return True if Tk is 8.6.13+ (fixes macOS click issues). If older, print warning and ask; return False to exit."""
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        patch = root.tk.call("info", "patchlevel")
+    finally:
+        root.destroy()
+    # Parse "8.6.12" -> (8, 6, 12)
+    try:
+        parts = tuple(int(x) for x in str(patch).split(".")[:3])
+    except (ValueError, TypeError):
+        return True  # unknown format, assume ok
+    if parts >= (8, 6, 13):
+        return True
+    print(f"\nTk version {patch} is older than 8.6.13.")
+    print("On macOS, this can cause clicks in fields and lists to not register until you move the mouse slightly.")
+    print("\nTo update (use the command for your OS):")
+    print(_tk_update_instructions())
+    print()
+    try:
+        reply = input("Continue anyway? [y/N]: ").strip().lower()
+    except EOFError:
+        reply = "n"
+    if reply not in ("y", "yes"):
+        print("Exiting. Update Tk then run the app again.")
+        return False
+    return True
+
+
 if __name__ == "__main__":
+    if not _check_tk_version():
+        sys.exit(0)
     FloatPlanApp().run()
