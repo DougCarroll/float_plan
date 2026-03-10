@@ -1,0 +1,4 @@
+# pypdf needs one of these for AES (encrypted PDFs). We list both so AES works even if cryptography fails to load.
+cryptography>=3.1
+pycryptodome>=3.19
+pypdf>=4.0

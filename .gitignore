@@ -1,0 +1,31 @@
+# Saved data (vessels, crew) — do not commit
+data/
+
+# Saved float plans and generated PDFs
+*.floatplan
+*.pdf
+!USCGFloatPlan.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+ENV/
+*.egg-info/
+.eggs/
+
+# Secrets and env
+.env
+.env.*
+*.pem
+secrets/
+*.secret
+
+# IDE / OS
+.DS_Store
+*.swp
+*.swo
+.cursor/

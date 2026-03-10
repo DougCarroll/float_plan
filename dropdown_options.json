@@ -1,0 +1,19 @@
+{
+  "_comment": "EDIT THIS FILE to configure all pull-downs. 1) Option lists: add or edit the lists below (first empty string = blank choice). 2) Which fields use them: edit _dropdown_fields (app field name -> option key). Restart the app after saving.",
+  "_dropdown_fields": {
+    "id_type": "ID-Type",
+    "id_hull_mat": "ID-HullMat",
+    "pro_prim_eng_type": "PRO-PrimEngType",
+    "pro_aux_eng_type": "PRO-AuxEngType",
+    "com_radio1_type": "COM-RadioType",
+    "com_radio2_type": "COM-RadioType",
+    "gender": "OPR-Gender",
+    "depart_mode": "01DepartMode"
+  },
+  "ID-Type": ["", "Air Boat", "Ambh. Vehicle", "Bass boat", "Cabin cruiser", "Canoe", "Catamaran", "Catboat", "Cutter", "Dinghy", "Dory", "Houseboat", "Hovercraft", "Inflatable", "Jon boat", "Kayak", "Ketch", "Launch", "Pontoon", "PWC - Jet Ski", "PWC - Other", "Raft", "Rigid-inflatable", "Runabout", "Sailboard", "Schooner", "Skiff", "Sloop", "Sunfish", "Trawler", "Trimaran", "Utility/Fishing", "Yawl"],
+  "ID-HullMat": ["", "Aluminum", "Composite", "Concrete", "Fabric", "Fiberglass", "Plastic", "Steel", "Wood"],
+  "PRO-PrimEngType": ["", "Diesel IB", "Diesel IO", "Diesel OB", "Electric IB", "Electric IO", "Electric OB", "Fan Gas IB", "Gas IO", "Gas OB", "Oar", "Paddle", "Wind"],
+  "COM-RadioType": ["", "None", "CB", "HF", "MF", "VHF-FM"],
+  "01DepartMode": ["", "Power", "Sail", "Paddle", "Other"],
+  "OPR-Gender": ["", "M", "F"]
+}
