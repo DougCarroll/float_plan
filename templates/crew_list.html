@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Crew — Float Plan{% endblock %}
+{% block content %}
+<div class="manage-page">
+  <h1>Crew members</h1>
+  <p class="sub"><a href="{{ url_for('index') }}">← Float Plan</a> · <a href="{{ url_for('crew_new') }}">New crew member</a></p>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  {% if members %}
+  <ul class="manage-list">
+    {% for m in members %}
+    <li>
+      <div class="manage-row">
+        <div>
+          <a href="{{ url_for('crew_edit', index=loop.index0) }}">{{ m.name or 'Unnamed' }}</a>
+        </div>
+        <form method="post" action="{{ url_for('crew_delete', index=loop.index0) }}" class="form-delete-crew" data-name="{{ (m.name or 'Unnamed') | e }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn-delete">Delete</button>
+        </form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  <script>
+    document.querySelectorAll('.form-delete-crew').forEach(function(form) {
+      form.addEventListener('submit', function(e) {
+        var name = form.getAttribute('data-name') || 'this crew member';
+        if (!confirm('Delete ' + name + '?')) e.preventDefault();
+      });
+    });
+  </script>
+  {% else %}
+  <p class="muted">No crew members yet. <a href="{{ url_for('crew_new') }}">Add one</a>.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Vessels — Float Plan{% endblock %}
+{% block content %}
+<div class="manage-page">
+  <h1>Vessels</h1>
+  <p class="sub"><a href="{{ url_for('index') }}">← Float Plan</a> · <a href="{{ url_for('vessel_new') }}">New vessel</a></p>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  {% if vessels %}
+  <ul class="manage-list">
+    {% for v in vessels %}
+    <li>
+      <div class="manage-row">
+        <div>
+          <a href="{{ url_for('vessel_edit', index=loop.index0) }}">{{ v.name or v.id_vessel_name or 'Unnamed' }}</a>
+          {% if v.id_home_port %}<span class="muted"> — {{ v.id_home_port }}</span>{% endif %}
+        </div>
+        <form method="post" action="{{ url_for('vessel_delete', index=loop.index0) }}" class="form-delete-vessel" data-name="{{ (v.name or v.id_vessel_name or 'Unnamed') | e }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn-delete">Delete</button>
+        </form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  <script>
+    document.querySelectorAll('.form-delete-vessel').forEach(function(form) {
+      form.addEventListener('submit', function(e) {
+        var name = form.getAttribute('data-name') || 'this vessel';
+        if (!confirm('Delete ' + name + '?')) e.preventDefault();
+      });
+    });
+  </script>
+  {% else %}
+  <p class="muted">No vessels yet. <a href="{{ url_for('vessel_new') }}">Add one</a>.</p>
+  {% endif %}
+</div>
+{% endblock %}

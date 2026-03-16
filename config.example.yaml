@@ -1,0 +1,8 @@
+# Float Plan web app — copy to config.yaml and adjust.
+# Used by run_web.sh and gunicorn. Optional; defaults: host 127.0.0.1, port 5000.
+
+# When running behind a Cloudflare tunnel, bind to 127.0.0.1 and let cloudflared
+# proxy to this port. Use 0.0.0.0 only if you need direct external access.
+web:
+  host: "127.0.0.1"
+  port: 5100

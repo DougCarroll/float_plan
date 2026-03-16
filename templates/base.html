@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{% block title %}Float Plan{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <nav class="nav">
+    <a href="{{ url_for('index') }}">Float Plan</a>
+    {% if current_user.is_authenticated and current_user.group == 'admin' %}
+      <a href="{{ url_for('admin_users') }}">Users</a>
+    {% endif %}
+    <span class="nav-user">
+      {% if current_user.is_authenticated %}
+        {{ current_user.username }} ({{ current_user.group }})
+        <a href="{{ url_for('logout') }}">Logout</a>
+      {% else %}
+        <a href="{{ url_for('login') }}">Login</a>
+      {% endif %}
+    </span>
+  </nav>
+  <main class="main">
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -43,3 +43,38 @@ The app is wired to the form fields in **USCGFloatPlan.pdf** in this directory. 
 ```
 
 If you switch to another template version, run `list_pdf_fields.py` to get field names and update `pdf_fill.py` and `dropdown_options.json` (and the GUI) to match.
+
+## Web app
+
+The same vessel/crew data and PDF generation are available as a web app, so you can run it on a server and use it behind a **Cloudflare tunnel** (like [anchor_watch](../anchor_watch)).
+
+**Prerequisites:** Create the venv and install base deps once with `./run.sh` (or `run.bat` on Windows). Then:
+
+```bash
+./run_web.sh
+```
+
+This installs web dependencies (Flask, gunicorn, PyYAML) into the same `.venv`, then starts the web app. Default port is 5000; override with `PORT=5100 ./run_web.sh` or use a `config.yaml` (copy from `config.example.yaml`) with `web.port` and optional `web.host`.
+
+- **URL:** `http://127.0.0.1:5000` (or your configured host/port). The page lets you select vessel and operator, choose who’s on board, add itinerary legs, set rescue authority and contacts, and **Generate PDF** to download the filled form.
+- **Data:** Vessels and crew are read from the same `data/` directory as the desktop app. Add or edit vessels/crew with the desktop app; the web app is for filling a plan and generating the PDF.
+- **Cloudflare:** Run your tunnel (e.g. `cloudflared tunnel --url http://127.0.0.1:5000`) and optionally protect the URL with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/). Keep the app bound to `127.0.0.1` so it is only reachable via the tunnel.
+
+**Run as a service (macOS):** Like [anchor_watch](../anchor_watch), you can run the web app under launchd so it starts at login and restarts if it exits. Optionally create a `.env` in the project root with `SECRET_KEY=...` and `PORT=...`; if you don’t, the app will create and reuse a key in `data/.flask_secret` on first run, and both `run_web.sh` and `start-service.sh` source `.env` so you only set it once. Run `./run_web.sh` once to create `.venv` and install dependencies, then:
+
+```bash
+./install_launchd.sh
+```
+
+This installs a Launch Agent at `~/Library/LaunchAgents/com.floatplan.plist` and loads it. Logs go to `data/service.log` and `data/service.error.log`. To stop: `launchctl unload ~/Library/LaunchAgents/com.floatplan.plist`. To check: `launchctl list | grep floatplan`.
+
+## Git / GitHub — don’t push secrets
+
+The repo’s `.gitignore` is set up so these are **not** committed:
+
+- **`.env`**, **`.env.*`** — SECRET_KEY, PORT, etc.
+- **`config.yaml`** — local web port/host (copy from `config.example.yaml`).
+- **`data/`** — vessels, crew, user DB (`float_plan.db`), `.flask_secret`, service logs.
+- **`*.secret`**, **`secrets/`** — any other secret files.
+
+Before your first push (or after adding new secrets), run `git status` and `git check-ignore -v <file>` if unsure; never add the files above.

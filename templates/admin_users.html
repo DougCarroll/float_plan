@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Users — Float Plan{% endblock %}
+{% block content %}
+<div class="page-admin">
+  <h1>Manage users</h1>
+  <p class="sub">Admin only. Create users and set role: <strong>admin</strong> (manage users), <strong>crew</strong> (edit data & generate PDFs), <strong>viewer</strong> (view only).</p>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <section class="admin-section">
+    <h2>Create user</h2>
+    <form method="post" action="{{ url_for('admin_users') }}" class="admin-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="create">
+      <label>Username <input type="text" name="username" required></label>
+      <label>Password <input type="password" name="password" required></label>
+      <label>Role
+        <select name="group">
+          <option value="viewer">Viewer</option>
+          <option value="crew">Crew</option>
+          <option value="admin">Admin</option>
+        </select>
+      </label>
+      <button type="submit">Create</button>
+    </form>
+  </section>
+
+  <section class="admin-section">
+    <h2>Users</h2>
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>Username</th>
+          <th>Role</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td>{{ u.username }}</td>
+          <td>
+            <form method="post" action="{{ url_for('admin_users') }}" style="display:inline;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="set_group">
+              <input type="hidden" name="user_id" value="{{ u.id }}">
+              <select name="group" onchange="this.form.submit()">
+                <option value="viewer" {% if u.group == 'viewer' %}selected{% endif %}>Viewer</option>
+                <option value="crew" {% if u.group == 'crew' %}selected{% endif %}>Crew</option>
+                <option value="admin" {% if u.group == 'admin' %}selected{% endif %}>Admin</option>
+              </select>
+            </form>
+          </td>
+          <td>
+            {% if u.id != current_user.id %}
+            <form method="post" action="{{ url_for('admin_users') }}" style="display:inline;" class="form-delete-user" data-username="{{ u.username | e }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="delete">
+              <input type="hidden" name="user_id" value="{{ u.id }}">
+              <button type="submit" class="btn-delete">Delete</button>
+            </form>
+            {% else %}
+            <span class="muted">(you)</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+<script>
+  document.querySelectorAll('.form-delete-user').forEach(function(form) {
+    form.addEventListener('submit', function(e) {
+      var username = form.getAttribute('data-username') || 'this user';
+      if (!confirm('Delete ' + username + '?')) e.preventDefault();
+    });
+  });
+</script>
+{% endblock %}
+

@@ -1,0 +1,535 @@
+{% extends "base.html" %}
+{% block title %}Float Plan — USCG Float Plan{% endblock %}
+{% block content %}
+<div class="container">
+  <h1>Float Plan</h1>
+  <p class="intro">Select vessel and crew, add itinerary and contacts, then generate the USCG float plan PDF. Vessels and crew are stored on the server (same data as the desktop app).</p>
+
+  <form id="plan-form" class="plan-form">
+    <section class="section">
+      <h2>Vessel</h2>
+      <div class="field">
+        <label for="vessel">Vessel</label>
+        <select id="vessel" name="vessel" required>
+          <option value="">— Select vessel —</option>
+        </select>
+      </div>
+      <p class="manage-link"><a href="{{ url_for('vessels_list') }}">Manage vessels…</a></p>
+      <div class="field inline-add">
+        <label for="new_vessel_name">Add vessel</label>
+        <div class="inline-add-row">
+          <input type="text" id="new_vessel_name" placeholder="Vessel name">
+          <button type="button" id="add-vessel" class="btn btn-secondary btn-inline">Add</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Crew</h2>
+      <div class="field">
+        <label for="operator">Operator</label>
+        <select id="operator" name="operator" required>
+          <option value="">— Select operator —</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>On board</label>
+        <div id="on-board" class="checkboxes"></div>
+      </div>
+      <p class="manage-link"><a href="{{ url_for('crew_list') }}">Manage crew…</a></p>
+      <div class="field inline-add">
+        <label for="new_crew_name">Add crew member</label>
+        <div class="inline-add-row">
+          <input type="text" id="new_crew_name" placeholder="Name">
+          <button type="button" id="add-crew" class="btn btn-secondary btn-inline">Add</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Itinerary</h2>
+      <div id="legs"></div>
+      <div class="button-row">
+        <button type="button" id="add-leg" class="btn btn-secondary">Add leg</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Rescue & contacts</h2>
+      <div class="field">
+        <label for="rescue_authority">Rescue authority</label>
+        <input list="rescue_authority_list" id="rescue_authority" name="rescue_authority" placeholder="Type or choose…">
+        <datalist id="rescue_authority_list"></datalist>
+      </div>
+      <div class="field">
+        <label for="rescue_authority_phone">Rescue authority phone</label>
+        <input type="text" id="rescue_authority_phone" name="rescue_authority_phone" placeholder="+1 (555) 555-5555">
+      </div>
+      <div class="field">
+        <label for="contact1">Contact 1</label>
+        <input type="text" id="contact1" name="contact1">
+      </div>
+      <div class="field">
+        <label for="contact1_phone">Contact 1 phone</label>
+        <input type="text" id="contact1_phone" name="contact1_phone">
+      </div>
+      <div class="field">
+        <label for="contact2">Contact 2</label>
+        <input type="text" id="contact2" name="contact2">
+      </div>
+      <div class="field">
+        <label for="contact2_phone">Contact 2 phone</label>
+        <input type="text" id="contact2_phone" name="contact2_phone">
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Operator experience</h2>
+      <div class="checkboxes">
+        <label class="checkbox-label"><input type="checkbox" id="operator_has_vessel_experience" name="operator_has_vessel_experience"> Experience with this vessel</label>
+        <label class="checkbox-label"><input type="checkbox" id="operator_has_area_experience" name="operator_has_area_experience"> Experience with these areas</label>
+      </div>
+    </section>
+
+    <section class="section actions">
+      <button type="button" id="save-plan" class="btn btn-secondary">Save plan…</button>
+      <button type="button" id="open-plan" class="btn btn-secondary">Open plan…</button>
+      <button type="submit" id="generate-pdf" class="btn btn-primary">Generate PDF</button>
+      <input type="file" id="open-plan-file" accept=".floatplan,.json,application/json" style="display:none">
+      <span id="message" class="message"></span>
+    </section>
+  </form>
+</div>
+
+<script>
+(function() {
+  const state = {
+    vessels: [],
+    crewMembers: [],
+    rescueNames: [],
+    rescuePhones: {},
+    departModeOptions: [],
+    legs: []
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function csrfHeader() {
+    var meta = document.querySelector('meta[name="csrf-token"]');
+    return meta && meta.getAttribute('content') ? { 'X-CSRFToken': meta.getAttribute('content') } : {};
+  }
+
+  async function loadData() {
+    const [vessels, crew, rescue] = await Promise.all([
+      fetch('/api/vessels').then(r => r.json()),
+      fetch('/api/crew_members').then(r => r.json()),
+      fetch('/api/rescue_authorities').then(r => r.json())
+    ]);
+    state.vessels = vessels || [];
+    state.crewMembers = crew || [];
+    state.rescueNames = (rescue && rescue.names) || [];
+    state.rescuePhones = (rescue && rescue.phones) || {};
+    const opts = await fetch('/api/options').then(r => r.json());
+    state.departModeOptions = (opts && opts['01DepartMode']) || ['', 'Power', 'Sail', 'Paddle', 'Other'];
+    renderVesselSelect();
+    renderOperatorSelect();
+    renderOnBoard();
+    renderRescueInput();
+    if (state.legs.length === 0) addLeg();
+    else renderLegs();
+  }
+
+  function renderVesselSelect() {
+    const sel = $('vessel');
+    sel.innerHTML = '<option value="">— Select vessel —</option>';
+    state.vessels.forEach((v, i) => {
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = (v.name || v.id_vessel_name || 'Unnamed').trim();
+      sel.appendChild(opt);
+    });
+  }
+
+  function renderOperatorSelect() {
+    const sel = $('operator');
+    sel.innerHTML = '<option value="">— Select operator —</option>';
+    state.crewMembers.forEach((m, i) => {
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = (m.name || 'Unnamed').trim();
+      sel.appendChild(opt);
+    });
+  }
+
+  function renderOnBoard() {
+    const div = $('on-board');
+    div.innerHTML = '';
+    state.crewMembers.forEach((m, i) => {
+      const label = document.createElement('label');
+      label.className = 'checkbox-label';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.name = 'on_board';
+      cb.value = i;
+      cb.dataset.index = i;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(' ' + (m.name || 'Unnamed').trim()));
+      div.appendChild(label);
+    });
+  }
+
+  function renderRescueInput() {
+    const input = $('rescue_authority');
+    const dl = document.getElementById('rescue_authority_list');
+    dl.innerHTML = '';
+    state.rescueNames.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      dl.appendChild(opt);
+    });
+    input.addEventListener('input', () => {
+      const v = input.value.trim();
+      if (state.rescuePhones && Object.prototype.hasOwnProperty.call(state.rescuePhones, v)) {
+        $('rescue_authority_phone').value = state.rescuePhones[v] || '';
+      }
+    });
+  }
+
+  function addLeg() {
+    state.legs.push({
+      depart_date: '',
+      depart_time: '',
+      depart_location: '',
+      depart_mode: '',
+      arrive_date: '',
+      arrive_time: '',
+      arrive_location: '',
+      arrive_reason: '',
+      arrive_checkin_time: ''
+    });
+    renderLegs();
+  }
+
+  function removeLeg(index) {
+    state.legs.splice(index, 1);
+    renderLegs();
+  }
+
+  function renderLegs() {
+    const div = $('legs');
+    div.innerHTML = '';
+    state.legs.forEach((leg, idx) => {
+      const card = document.createElement('div');
+      card.className = 'leg-card';
+      card.innerHTML = `
+        <div class="leg-header">
+          <strong>Leg ${idx + 1}</strong>
+          <button type="button" class="btn btn-small" data-remove="${idx}">Remove</button>
+        </div>
+        <div class="leg-grid">
+          <div class="field">
+            <label>Depart date</label>
+            <input type="text" data-leg="${idx}" data-key="depart_date" placeholder="MM/DD/YYYY" value="${escapeAttr(leg.depart_date)}">
+          </div>
+          <div class="field">
+            <label>Depart time</label>
+            <input type="text" data-leg="${idx}" data-key="depart_time" placeholder="HH:MM" value="${escapeAttr(leg.depart_time)}">
+          </div>
+          <div class="field field-wide">
+            <label>Depart location</label>
+            <input type="text" data-leg="${idx}" data-key="depart_location" value="${escapeAttr(leg.depart_location)}">
+          </div>
+          <div class="field">
+            <label>Mode</label>
+            <select data-leg="${idx}" data-key="depart_mode">
+              ${state.departModeOptions.map(o => `<option value="${escapeAttr(o)}" ${leg.depart_mode === o ? 'selected' : ''}>${escapeHtml(o || '—')}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>Arrive date</label>
+            <input type="text" data-leg="${idx}" data-key="arrive_date" placeholder="MM/DD/YYYY" value="${escapeAttr(leg.arrive_date)}">
+          </div>
+          <div class="field">
+            <label>Arrive time</label>
+            <input type="text" data-leg="${idx}" data-key="arrive_time" placeholder="HH:MM" value="${escapeAttr(leg.arrive_time)}">
+          </div>
+          <div class="field field-wide">
+            <label>Arrive location</label>
+            <input type="text" data-leg="${idx}" data-key="arrive_location" value="${escapeAttr(leg.arrive_location)}">
+          </div>
+          <div class="field field-wide">
+            <label>Reason for stop</label>
+            <input type="text" data-leg="${idx}" data-key="arrive_reason" value="${escapeAttr(leg.arrive_reason)}">
+          </div>
+        </div>
+      `;
+      div.appendChild(card);
+      card.querySelector('[data-remove]').addEventListener('click', () => removeLeg(idx));
+      card.querySelectorAll('input, select').forEach(el => {
+        const key = el.dataset.key;
+        const legIdx = parseInt(el.dataset.leg, 10);
+        const update = () => { state.legs[legIdx][key] = el.value; };
+        el.addEventListener('input', update);
+        el.addEventListener('change', update);
+      });
+    });
+  }
+
+  function escapeAttr(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function escapeHtml(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function getSelectedVessel() {
+    const i = parseInt($('vessel').value, 10);
+    if (isNaN(i) || i < 0 || i >= state.vessels.length) return null;
+    return state.vessels[i];
+  }
+
+  function getSelectedOperator() {
+    const i = parseInt($('operator').value, 10);
+    if (isNaN(i) || i < 0 || i >= state.crewMembers.length) return null;
+    return state.crewMembers[i];
+  }
+
+  function getOnBoardPersons() {
+    const operatorIndex = parseInt($('operator').value, 10);
+    const persons = [];
+    $('on-board').querySelectorAll('input[name="on_board"]:checked').forEach(cb => {
+      const idx = parseInt(cb.dataset.index, 10);
+      if (idx !== operatorIndex && state.crewMembers[idx]) persons.push(state.crewMembers[idx]);
+    });
+    return persons;
+  }
+
+  function buildPayload() {
+    const vessel = getSelectedVessel();
+    const operator = getSelectedOperator();
+    if (!vessel || !operator) return null;
+    const persons = getOnBoardPersons();
+    return {
+      vessel: vessel,
+      operator: operator,
+      persons: persons,
+      itinerary: state.legs,
+      rescue_authority: $('rescue_authority').value.trim(),
+      rescue_authority_phone: $('rescue_authority_phone').value.trim(),
+      contact1: $('contact1').value.trim(),
+      contact1_phone: $('contact1_phone').value.trim(),
+      contact2: $('contact2').value.trim(),
+      contact2_phone: $('contact2_phone').value.trim(),
+      operator_has_vessel_experience: $('operator_has_vessel_experience').checked,
+      operator_has_area_experience: $('operator_has_area_experience').checked
+    };
+  }
+
+  /** Build plan object for save (same format as desktop .floatplan). */
+  function buildPlanForSave() {
+    const vessel = getSelectedVessel();
+    const vesselName = vessel ? ((vessel.name || vessel.id_vessel_name || '').trim()) : '';
+    const operator = getSelectedOperator();
+    const operatorName = operator ? (operator.name || '').trim() : '';
+    const onBoardNames = [];
+    $('on-board').querySelectorAll('input[name="on_board"]:checked').forEach(function(cb) {
+      const idx = parseInt(cb.dataset.index, 10);
+      if (!isNaN(idx) && state.crewMembers[idx]) {
+        const n = (state.crewMembers[idx].name || '').trim();
+        if (n && onBoardNames.indexOf(n) === -1) onBoardNames.push(n);
+      }
+    });
+    return {
+      version: 1,
+      vessel_name: vesselName,
+      operator_name: operatorName,
+      on_board_names: onBoardNames,
+      itinerary: state.legs.map(function(leg) {
+        return {
+          depart_date: leg.depart_date || '',
+          depart_time: leg.depart_time || '',
+          depart_location: leg.depart_location || '',
+          depart_mode: leg.depart_mode || '',
+          arrive_date: leg.arrive_date || '',
+          arrive_time: leg.arrive_time || '',
+          arrive_location: leg.arrive_location || '',
+          arrive_reason: leg.arrive_reason || '',
+          arrive_checkin_time: leg.arrive_checkin_time || ''
+        };
+      }),
+      rescue_authority: $('rescue_authority').value.trim(),
+      rescue_authority_phone: $('rescue_authority_phone').value.trim(),
+      contact1: $('contact1').value.trim(),
+      contact1_phone: $('contact1_phone').value.trim(),
+      contact2: $('contact2').value.trim(),
+      contact2_phone: $('contact2_phone').value.trim(),
+      operator_has_vessel_experience: $('operator_has_vessel_experience').checked,
+      operator_has_area_experience: $('operator_has_area_experience').checked
+    };
+  }
+
+  function savePlan() {
+    const plan = buildPlanForSave();
+    const blob = new Blob([JSON.stringify(plan, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'float_plan.floatplan';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    $('message').textContent = 'Plan saved.';
+  }
+
+  function applyPlan(plan) {
+    if (!plan || typeof plan !== 'object') return;
+    state.legs = Array.isArray(plan.itinerary) ? plan.itinerary.map(function(leg) {
+      return {
+        depart_date: leg.depart_date || '',
+        depart_time: leg.depart_time || '',
+        depart_location: leg.depart_location || '',
+        depart_mode: leg.depart_mode || '',
+        arrive_date: leg.arrive_date || '',
+        arrive_time: leg.arrive_time || '',
+        arrive_location: leg.arrive_location || '',
+        arrive_reason: leg.arrive_reason || '',
+        arrive_checkin_time: leg.arrive_checkin_time || ''
+      };
+    }) : [];
+    var vesselName = (plan.vessel_name || '').trim();
+    var operatorName = (plan.operator_name || '').trim();
+    var onBoardNames = plan.on_board_names || [];
+    var vesselIndex = '';
+    for (var i = 0; i < state.vessels.length; i++) {
+      var n = (state.vessels[i].name || state.vessels[i].id_vessel_name || '').trim();
+      if (n && n === vesselName) { vesselIndex = String(i); break; }
+    }
+    var operatorIndex = '';
+    for (var j = 0; j < state.crewMembers.length; j++) {
+      var m = (state.crewMembers[j].name || '').trim();
+      if (m && m === operatorName) { operatorIndex = String(j); break; }
+    }
+    var onBoardSet = {};
+    state.crewMembers.forEach(function(m, idx) {
+      var name = (m.name || '').trim();
+      if (name && onBoardNames.indexOf(name) !== -1) onBoardSet[idx] = true;
+    });
+    $('rescue_authority').value = plan.rescue_authority || '';
+    $('rescue_authority_phone').value = plan.rescue_authority_phone || '';
+    $('contact1').value = plan.contact1 || '';
+    $('contact1_phone').value = plan.contact1_phone || '';
+    $('contact2').value = plan.contact2 || '';
+    $('contact2_phone').value = plan.contact2_phone || '';
+    $('operator_has_vessel_experience').checked = !!plan.operator_has_vessel_experience;
+    $('operator_has_area_experience').checked = !!plan.operator_has_area_experience;
+    renderVesselSelect();
+    renderOperatorSelect();
+    renderOnBoard();
+    renderLegs();
+    $('vessel').value = vesselIndex;
+    $('operator').value = operatorIndex;
+    $('on-board').querySelectorAll('input[name="on_board"]').forEach(function(cb) {
+      cb.checked = !!onBoardSet[parseInt(cb.dataset.index, 10)];
+    });
+    $('message').textContent = 'Plan loaded.';
+  }
+
+  function openPlanFile(ev) {
+    var file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        var plan = JSON.parse(e.target.result);
+        applyPlan(plan);
+      } catch (err) {
+        $('message').textContent = 'Error: invalid plan file.';
+      }
+      ev.target.value = '';
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  $('plan-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = buildPayload();
+    if (!payload) {
+      $('message').textContent = 'Select a vessel and operator.';
+      return;
+    }
+    $('message').textContent = 'Generating PDF…';
+    $('generate-pdf').disabled = true;
+    try {
+      const res = await fetch('/api/pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || res.statusText);
+      }
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'float_plan.pdf';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      $('message').textContent = 'PDF downloaded.';
+    } catch (err) {
+      $('message').textContent = 'Error: ' + (err.message || 'Failed to generate PDF');
+    } finally {
+      $('generate-pdf').disabled = false;
+    }
+  });
+
+  $('add-leg').addEventListener('click', addLeg);
+
+  $('save-plan').addEventListener('click', function() {
+    savePlan();
+  });
+  $('open-plan').addEventListener('click', function() {
+    $('open-plan-file').click();
+  });
+  $('open-plan-file').addEventListener('change', openPlanFile);
+
+  $('add-vessel').addEventListener('click', async () => {
+    const name = $('new_vessel_name').value.trim();
+    if (!name) return;
+    try {
+      const res = await fetch('/api/vessels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({ name })
+      });
+      if (!res.ok) throw new Error('Failed to add vessel');
+      $('new_vessel_name').value = '';
+      const vessels = await fetch('/api/vessels').then(r => r.json());
+      state.vessels = vessels || [];
+      renderVesselSelect();
+    } catch (err) {
+      $('message').textContent = 'Error adding vessel: ' + (err.message || 'failed');
+    }
+  });
+
+  $('add-crew').addEventListener('click', async () => {
+    const name = $('new_crew_name').value.trim();
+    if (!name) return;
+    try {
+      const res = await fetch('/api/crew_members', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify({ name })
+      });
+      if (!res.ok) throw new Error('Failed to add crew member');
+      $('new_crew_name').value = '';
+      const crew = await fetch('/api/crew_members').then(r => r.json());
+      state.crewMembers = crew || [];
+      renderOperatorSelect();
+      renderOnBoard();
+    } catch (err) {
+      $('message').textContent = 'Error adding crew member: ' + (err.message || 'failed');
+    }
+  });
+
+  loadData();
+})();
+</script>
+{% endblock %}

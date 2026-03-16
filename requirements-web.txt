@@ -1,0 +1,10 @@
+# Web app: base deps (PDF, crypto) + Flask, auth, and gunicorn
+-r requirements.txt
+flask>=3.0
+flask_sqlalchemy>=3.0
+flask_login>=0.6
+flask_wtf>=1.2
+passlib>=1.7
+flask_limiter>=3.5
+gunicorn>=21.2
+pyyaml>=6.0
