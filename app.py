@@ -1177,6 +1177,9 @@ class FloatPlanApp:
             if self.selected_operator_index is None or not self.crew_members:
                 _tk_alert(self.root, "Error", "Select an operator and at least one person on board.")
                 return
+            # Sync experience checkboxes so PDF reflects current UI
+            self.operator_has_vessel_experience = self.op_has_vessel_exp_var.get()
+            self.operator_has_area_experience = self.op_has_area_exp_var.get()
             operator = self.crew_members[self.selected_operator_index]
             op_age = _age_from_dob(operator.get("dob", "")) if operator.get("dob") else operator.get("age", "")
             op_with_exp = {**operator, "age": op_age, "vessel_experience": "Yes" if self.operator_has_vessel_experience else "", "area_experience": "Yes" if self.operator_has_area_experience else ""}

@@ -681,15 +681,16 @@ def api_pdf():
     vessel["rescue_authority_phone"] = (data.get("rescue_authority_phone") or "").strip()
 
     operator_raw = data.get("operator") or {}
+    # Full operator for OPR section (address, experience, etc.)
     operator = _person_for_pdf(operator_raw)
+    for k in ["address", "city", "state", "zip_code", "vehicle_year_make_model", "vehicle_license_num", "vehicle_parked_at", "vessel_trailored", "float_plan_note"]:
+        operator[k] = (operator_raw.get(k) or "").strip()
     operator["vessel_experience"] = "Yes" if data.get("operator_has_vessel_experience") else ""
     operator["area_experience"] = "Yes" if data.get("operator_has_area_experience") else ""
-    operator["float_plan_note"] = (operator_raw.get("float_plan_note") or "").strip()
-    for k in ["vehicle_year_make_model", "vehicle_license_num", "vehicle_parked_at", "vessel_trailored"]:
-        operator[k] = (operator_raw.get(k) or "").strip()
 
-    persons = []
-    for p in (data.get("persons") or [])[:12]:
+    # POB list: operator first (always on board), then other on-board persons (max 11 more = 12 total)
+    persons = [_person_for_pdf(operator_raw)]
+    for p in (data.get("persons") or [])[:11]:
         persons.append(_person_for_pdf(p))
     crew = {"operator": operator, "persons": persons}
 
