@@ -6,13 +6,17 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 from flask import Flask, jsonify, redirect, render_template, request, send_file, url_for, flash
+from werkzeug.exceptions import RequestEntityTooLarge
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_login import LoginManager, UserMixin, current_user, login_required, login_user, logout_user
@@ -29,6 +33,128 @@ from data_store import (
     DEFAULT_PERSON,
 )
 from pdf_fill import fill_float_plan
+
+
+def _normalize_date_string(s: str) -> str:
+    """Zero-pad month/day for parsing (e.g. 3/3/2025 -> 03/03/2025)."""
+    s = (s or "").strip()
+    if "/" in s:
+        parts = s.split("/", 2)
+        if len(parts) == 3:
+            a, b, c = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            if a.isdigit() and b.isdigit() and c.isdigit():
+                if len(a) == 1:
+                    a = "0" + a
+                if len(b) == 1:
+                    b = "0" + b
+                return f"{a}/{b}/{c}"
+    if "-" in s and len(s) >= 8:
+        parts = s.split("-", 2)
+        if len(parts) == 3:
+            a, b, c = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            if a.isdigit() and b.isdigit() and c.isdigit() and len(a) == 4:
+                if len(b) == 1:
+                    b = "0" + b
+                if len(c) == 1:
+                    c = "0" + c
+                return f"{a}-{b}-{c}"
+    return s
+
+
+def _format_date_for_summary(s: str) -> str:
+    """Format date as 'DayOfWeek, Month Nth' (e.g. Wednesday, March 3rd)."""
+    if not s or not str(s).strip():
+        return ""
+    raw = str(s).strip()
+    normalized = _normalize_date_string(raw)
+    for candidate in (normalized, raw):
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%B %d, %Y", "%B %d", "%b %d, %Y", "%b %d"):
+            try:
+                d = datetime.strptime(candidate, fmt)
+                day = d.day
+                suffix = "th" if 11 <= day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+                return f"{d.strftime('%A, %B')} {day}{suffix}"
+            except ValueError:
+                continue
+    return raw
+
+
+def _format_time_for_summary(s: str) -> str:
+    """Format time as 24h 4 digits (e.g. 0800, 1600)."""
+    if not s or not str(s).strip():
+        return ""
+    s = str(s).strip()
+    for fmt in ("%H:%M", "%I:%M %p", "%I:%M%p", "%H:%M:%S"):
+        try:
+            t = datetime.strptime(s, fmt)
+            return f"{t.hour:02d}{t.minute:02d}"
+        except ValueError:
+            continue
+    return s
+
+
+def _build_summary_text(data: dict) -> str:
+    """Build email-style summary from plan payload (vessel, operator, persons, itinerary, rescue/contacts)."""
+    lines = ["FLOAT PLAN SUMMARY"]
+    itinerary = list(data.get("itinerary") or [])
+    if itinerary:
+        first_dep = (itinerary[0].get("depart_location") or "").strip() or "—"
+        last_arr = (itinerary[-1].get("arrive_location") or "").strip() or "—"
+        lines.append(f"{first_dep} to {last_arr}")
+    lines.append("")
+    vessel = data.get("vessel") or {}
+    vessel_name = (vessel.get("name") or vessel.get("id_vessel_name") or "").strip()
+    if vessel_name:
+        lines.append(f"Vessel: {vessel_name}")
+        home = (vessel.get("id_home_port") or "").strip()
+        if home:
+            lines.append(f"Home port: {home}")
+        lines.append("")
+    operator = data.get("operator") or {}
+    op_name = (operator.get("name") or "").strip()
+    if op_name:
+        lines.append(f"Operator: {op_name}")
+        if (operator.get("home_phone") or "").strip():
+            lines.append(f"  Phone: {(operator.get('home_phone') or '').strip()}")
+        lines.append("")
+    persons = list(data.get("persons") or [])
+    on_board_names = [(p.get("name") or "").strip() for p in persons if (p.get("name") or "").strip()]
+    if on_board_names:
+        lines.append("Crew on board: " + ", ".join(on_board_names))
+        lines.append("")
+    if itinerary:
+        lines.append("ITINERARY")
+        lines.append("")
+        for leg in itinerary:
+            dep_date = _format_date_for_summary(leg.get("depart_date", "") or "")
+            dep_time = _format_time_for_summary(leg.get("depart_time", "") or "") or (leg.get("depart_time", "") or "").strip()
+            dep_loc = (leg.get("depart_location", "") or "").strip() or "—"
+            arr_date = _format_date_for_summary(leg.get("arrive_date", "") or "")
+            arr_time = _format_time_for_summary(leg.get("arrive_time", "") or "") or (leg.get("arrive_time", "") or "").strip()
+            arr_loc = (leg.get("arrive_location", "") or "").strip() or "—"
+            at_dep = f", at {dep_time}," if dep_time else ","
+            at_arr = f" at {arr_time}." if arr_time else "."
+            lines.append(f"{dep_date}{at_dep} depart {dep_loc} heading to {arr_loc}, expecting arrival on {arr_date}{at_arr}")
+        lines.append("")
+    rescue = (data.get("rescue_authority") or "").strip()
+    rescue_phone = (data.get("rescue_authority_phone") or "").strip()
+    if rescue or rescue_phone:
+        lines.append(f"Rescue authority: {rescue or '—'}")
+        if rescue_phone:
+            lines.append(f"  Phone: {rescue_phone}")
+        lines.append("")
+    c1 = (data.get("contact1") or "").strip()
+    c1_phone = (data.get("contact1_phone") or "").strip()
+    if c1 or c1_phone:
+        lines.append(f"Contact 1: {c1 or '—'} {c1_phone or ''}".strip())
+    c2 = (data.get("contact2") or "").strip()
+    c2_phone = (data.get("contact2_phone") or "").strip()
+    if c2 or c2_phone:
+        lines.append(f"Contact 2: {c2 or '—'} {c2_phone or ''}".strip())
+    text = "\n".join(lines).strip()
+    if not text:
+        text = "No plan details to summarize. Add a vessel, operator, and/or itinerary."
+    return text
 from pdf_form_options import FORM_OPTIONS, get_option_key_for_field, get_options
 from rescue_authorities import RCC_NAMES, RCC_PHONE_BY_NAME
 
@@ -124,6 +250,15 @@ TEMPLATE_PDF = APP_DIR / "USCGFloatPlan.pdf"
 
 app = Flask(__name__, template_folder=str(APP_DIR / "templates"), static_folder=str(APP_DIR / "static"))
 
+# Limit request body to reduce DoS risk (PDF/summary JSON can be large but bounded)
+app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024  # 4 MB
+
+# Session cookie hardening (app runs behind HTTPS via tunnel in production)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+if os.environ.get("PREFER_HTTPS", "").strip().lower() in ("1", "true", "yes"):
+    app.config["SESSION_COOKIE_SECURE"] = True
+
 # SECRET_KEY for sessions (Flask-Login). From env, or persisted file so you set it once (or never).
 _INSECURE_KEYS = ("", "change_this_secret_key")
 _SECRET_FILE = APP_DIR / "data" / ".flask_secret"
@@ -146,6 +281,14 @@ if not app.secret_key or app.secret_key in _INSECURE_KEYS:
         print("Created persistent secret key in data/.flask_secret (no need to set SECRET_KEY).", file=sys.stderr)
 
 csrf = CSRFProtect(app)
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def _handle_413(e):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Request body too large"}), 413
+    return e.get_response()
+
 
 limiter = Limiter(
     get_remote_address,
@@ -179,8 +322,10 @@ def _user_data_paths(username: str) -> tuple[Path, Path]:
 
 
 def _username_safe(username: str) -> bool:
-    """Reject usernames that could be used for path traversal."""
+    """Reject usernames that could be used for path traversal or abuse."""
     if not username or ".." in username or "/" in username or "\\" in username:
+        return False
+    if len(username) > 80:  # Match DB column; avoid filesystem/display abuse
         return False
     return True
 
@@ -358,9 +503,20 @@ def _person_for_pdf(p: dict) -> dict:
 
 
 @app.route("/")
-@login_required
 def index():
-    return render_template("index.html")
+    """Plan page: usable by everyone. Logged-in crew/admins get persistent vessels/crew."""
+    vessel_sections = _vessel_sections_with_labels()
+    vessel_bool_keys = list({k for k, v in DEFAULT_VESSEL.items() if isinstance(v, bool)})
+    vessel_form_options = _vessel_form_options()
+    gender_opts = get_options(get_option_key_for_field("gender") or "OPR-Gender") or ["", "M", "F"]
+    return render_template(
+        "index.html",
+        vessel_sections=vessel_sections,
+        vessel_bool_keys=vessel_bool_keys,
+        vessel_form_options=vessel_form_options,
+        person_field_labels=PERSON_FIELD_LABELS,
+        gender_options=gender_opts,
+    )
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -372,8 +528,9 @@ def login():
         user = User.query.filter_by(username=username).first()
         if user and user.check_password(password):
             login_user(user)
-            next_url = request.args.get("next")
-            if next_url and next_url.startswith("/") and not next_url.startswith("//"):
+            next_url = (request.args.get("next") or "").strip()
+            # Only allow relative path, no protocol-relative (//), no CR/LF (header injection)
+            if next_url and next_url.startswith("/") and "//" not in next_url and "\n" not in next_url and "\r" not in next_url:
                 return redirect(next_url)
             return redirect(url_for("index"))
         flash("Invalid username or password", "error")
@@ -635,15 +792,19 @@ def crew_delete(index: int):
 
 
 @app.route("/api/vessels")
-@crew_required
 def api_vessels():
+    """Return user's vessels when logged in; empty list for anonymous (they use client-side state)."""
+    if not current_user.is_authenticated:
+        return jsonify([])
     vessels = _load_user_vessels(current_user.username)
     return jsonify(vessels)
 
 
 @app.route("/api/crew_members")
-@crew_required
 def api_crew_members():
+    """Return user's crew when logged in; empty list for anonymous."""
+    if not current_user.is_authenticated:
+        return jsonify([])
     members = _load_user_crew_members(current_user.username)
     return jsonify(members)
 
@@ -660,8 +821,22 @@ def api_rescue_authorities():
     return jsonify({"names": RCC_NAMES, "phones": RCC_PHONE_BY_NAME})
 
 
+@app.route("/api/summary", methods=["POST"])
+def api_summary():
+    """Return text summary of the plan for copying into email. No auth required."""
+    try:
+        data = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"error": "Invalid JSON"}), 400
+    try:
+        text = _build_summary_text(data)
+        return jsonify({"text": text})
+    except Exception:
+        logger.exception("Summary generation failed")
+        return jsonify({"error": "Summary generation failed"}), 500
+
+
 @app.route("/api/pdf", methods=["POST"])
-@crew_required
 def api_pdf():
     """Generate PDF from plan JSON. Body: vessel, operator, persons, itinerary, rescue/contacts."""
     if not TEMPLATE_PDF.exists():
@@ -712,7 +887,8 @@ def api_pdf():
             download_name="float_plan.pdf",
         )
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("PDF generation failed")
+        return jsonify({"error": "PDF generation failed"}), 500
 
 
 @app.route("/api/vessels", methods=["POST"])

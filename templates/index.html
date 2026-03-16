@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Float Plan — USCG Float Plan{% endblock %}
 {% block content %}
-<div class="container">
+<div class="container" data-can-persist="{{ 'true' if (current_user.is_authenticated and current_user.group in ['admin', 'crew']) else 'false' }}">
   <h1>Float Plan</h1>
-  <p class="intro">Select vessel and crew, add itinerary and contacts, then generate the USCG float plan PDF. Vessels and crew are stored on the server (same data as the desktop app).</p>
+  <p class="intro">Select vessel and crew, add itinerary and contacts, then generate the USCG float plan PDF. {% if current_user.is_authenticated %}Your vessels and crew are stored on the server.{% else %}Use without logging in: data is not saved between visits—save and open a .floatplan file to continue later.{% endif %}</p>
 
   <form id="plan-form" class="plan-form">
     <section class="section">
@@ -14,7 +14,9 @@
           <option value="">— Select vessel —</option>
         </select>
       </div>
+      {% if current_user.is_authenticated and current_user.group in ['admin', 'crew'] %}
       <p class="manage-link"><a href="{{ url_for('vessels_list') }}">Manage vessels…</a></p>
+      {% endif %}
       <div class="field inline-add">
         <label for="new_vessel_name">Add vessel</label>
         <div class="inline-add-row">
@@ -36,7 +38,9 @@
         <label>On board</label>
         <div id="on-board" class="checkboxes"></div>
       </div>
+      {% if current_user.is_authenticated and current_user.group in ['admin', 'crew'] %}
       <p class="manage-link"><a href="{{ url_for('crew_list') }}">Manage crew…</a></p>
+      {% endif %}
       <div class="field inline-add">
         <label for="new_crew_name">Add crew member</label>
         <div class="inline-add-row">
@@ -94,11 +98,98 @@
     <section class="section actions">
       <button type="button" id="save-plan" class="btn btn-secondary">Save plan…</button>
       <button type="button" id="open-plan" class="btn btn-secondary">Open plan…</button>
+      <button type="button" id="summary-btn" class="btn btn-secondary">Summary…</button>
       <button type="submit" id="generate-pdf" class="btn btn-primary">Generate PDF</button>
       <input type="file" id="open-plan-file" accept=".floatplan,.json,application/json" style="display:none">
       <span id="message" class="message"></span>
     </section>
   </form>
+</div>
+
+<div id="summary-modal" class="modal" role="dialog" aria-labelledby="summary-modal-title" aria-modal="true" hidden>
+  <div class="modal-content">
+    <h2 id="summary-modal-title">Summary — copy for email</h2>
+    <textarea id="summary-text" class="summary-text" readonly></textarea>
+    <div class="modal-actions">
+      <button type="button" id="summary-copy" class="btn btn-primary">Copy</button>
+      <button type="button" id="summary-close" class="btn btn-secondary">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="add-vessel-modal" class="modal" role="dialog" aria-labelledby="add-vessel-modal-title" aria-modal="true" hidden>
+  <div class="modal-content modal-form-content">
+    <h2 id="add-vessel-modal-title">Add vessel</h2>
+    <form id="add-vessel-form" class="modal-form" data-bool-keys="{{ vessel_bool_keys | join(',') }}">
+      <div class="modal-form-body">
+        {% for section_label, fields in vessel_sections %}
+        <section class="section">
+          <h3 class="section-title">{{ section_label }}</h3>
+          {% for key, label in fields %}
+          <div class="field">
+            {% if key in vessel_bool_keys %}
+            <label class="checkbox-label">
+              <input type="checkbox" name="{{ key }}" value="1">
+              {{ label }}
+            </label>
+            {% elif key in vessel_form_options and vessel_form_options[key] %}
+            <label for="modal-vessel-{{ key }}">{{ label }}</label>
+            <select id="modal-vessel-{{ key }}" name="{{ key }}">
+              {% for opt in vessel_form_options[key] %}
+              <option value="{{ opt }}">{{ opt or '—' }}</option>
+              {% endfor %}
+            </select>
+            {% else %}
+            <label for="modal-vessel-{{ key }}">{{ label }}</label>
+            <input type="text" id="modal-vessel-{{ key }}" name="{{ key }}">
+            {% endif %}
+          </div>
+          {% endfor %}
+        </section>
+        {% endfor %}
+      </div>
+      <div class="modal-actions">
+        <button type="submit" class="btn btn-primary">Add vessel</button>
+        <button type="button" id="add-vessel-modal-cancel" class="btn btn-secondary">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="add-crew-modal" class="modal" role="dialog" aria-labelledby="add-crew-modal-title" aria-modal="true" hidden>
+  <div class="modal-content modal-form-content">
+    <h2 id="add-crew-modal-title">Add crew member</h2>
+    <form id="add-crew-form" class="modal-form">
+      <div class="modal-form-body">
+        <section class="section">
+          {% for key, label in person_field_labels %}
+          <div class="field">
+            {% if key == 'pfd' %}
+            <label class="checkbox-label">
+              <input type="checkbox" name="pfd" value="1">
+              {{ label }}
+            </label>
+            {% elif key == 'gender' %}
+            <label for="modal-crew-gender">{{ label }}</label>
+            <select id="modal-crew-gender" name="gender">
+              {% for opt in gender_options %}
+              <option value="{{ opt }}">{{ opt or '—' }}</option>
+              {% endfor %}
+            </select>
+            {% else %}
+            <label for="modal-crew-{{ key }}">{{ label }}</label>
+            <input type="text" id="modal-crew-{{ key }}" name="{{ key }}">
+            {% endif %}
+          </div>
+          {% endfor %}
+        </section>
+      </div>
+      <div class="modal-actions">
+        <button type="submit" class="btn btn-primary">Add crew member</button>
+        <button type="button" id="add-crew-modal-cancel" class="btn btn-secondary">Cancel</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <script>
@@ -119,16 +210,18 @@
   }
 
   async function loadData() {
-    const [vessels, crew, rescue] = await Promise.all([
-      fetch('/api/vessels').then(r => r.json()),
-      fetch('/api/crew_members').then(r => r.json()),
-      fetch('/api/rescue_authorities').then(r => r.json())
+    const [vesselsRes, crewRes, rescueRes] = await Promise.all([
+      fetch('/api/vessels'),
+      fetch('/api/crew_members'),
+      fetch('/api/rescue_authorities')
     ]);
-    state.vessels = vessels || [];
-    state.crewMembers = crew || [];
+    state.vessels = vesselsRes.ok ? (await vesselsRes.json()) || [] : [];
+    state.crewMembers = crewRes.ok ? (await crewRes.json()) || [] : [];
+    const rescue = rescueRes.ok ? (await rescueRes.json()) : {};
     state.rescueNames = (rescue && rescue.names) || [];
     state.rescuePhones = (rescue && rescue.phones) || {};
-    const opts = await fetch('/api/options').then(r => r.json());
+    const optsRes = await fetch('/api/options');
+    const opts = optsRes.ok ? (await optsRes.json()) : {};
     state.departModeOptions = (opts && opts['01DepartMode']) || ['', 'Power', 'Sail', 'Paddle', 'Other'];
     renderVesselSelect();
     renderOperatorSelect();
@@ -396,6 +489,27 @@
     var vesselName = (plan.vessel_name || '').trim();
     var operatorName = (plan.operator_name || '').trim();
     var onBoardNames = plan.on_board_names || [];
+    if (vesselName) {
+      var found = false;
+      for (var i = 0; i < state.vessels.length; i++) {
+        var n = (state.vessels[i].name || state.vessels[i].id_vessel_name || '').trim();
+        if (n && n === vesselName) { found = true; break; }
+      }
+      if (!found) state.vessels.push({ name: vesselName, id_vessel_name: vesselName });
+    }
+    if (operatorName) {
+      var foundOp = false;
+      for (var j = 0; j < state.crewMembers.length; j++) {
+        if ((state.crewMembers[j].name || '').trim() === operatorName) { foundOp = true; break; }
+      }
+      if (!foundOp) state.crewMembers.push({ name: operatorName });
+    }
+    onBoardNames.forEach(function(name) {
+      name = (name || '').trim();
+      if (!name) return;
+      var has = state.crewMembers.some(function(m) { return (m.name || '').trim() === name; });
+      if (!has) state.crewMembers.push({ name: name });
+    });
     var vesselIndex = '';
     for (var i = 0; i < state.vessels.length; i++) {
       var n = (state.vessels[i].name || state.vessels[i].id_vessel_name || '').trim();
@@ -490,7 +604,19 @@
   });
   $('open-plan-file').addEventListener('change', openPlanFile);
 
+  var container = document.querySelector('.container');
+  var canPersist = container && container.getAttribute('data-can-persist') === 'true';
+
   $('add-vessel').addEventListener('click', async () => {
+    if (!canPersist) {
+      var prefill = $('new_vessel_name').value.trim();
+      if (prefill) {
+        var inp = document.getElementById('modal-vessel-id_vessel_name');
+        if (inp) inp.value = prefill;
+      }
+      $('add-vessel-modal').removeAttribute('hidden');
+      return;
+    }
     const name = $('new_vessel_name').value.trim();
     if (!name) return;
     try {
@@ -510,6 +636,15 @@
   });
 
   $('add-crew').addEventListener('click', async () => {
+    if (!canPersist) {
+      var prefill = $('new_crew_name').value.trim();
+      if (prefill) {
+        var nameInp = document.querySelector('#add-crew-form input[name="name"]');
+        if (nameInp) nameInp.value = prefill;
+      }
+      $('add-crew-modal').removeAttribute('hidden');
+      return;
+    }
     const name = $('new_crew_name').value.trim();
     if (!name) return;
     try {
@@ -527,6 +662,134 @@
     } catch (err) {
       $('message').textContent = 'Error adding crew member: ' + (err.message || 'failed');
     }
+  });
+
+  $('summary-btn').addEventListener('click', async () => {
+    const payload = buildPayload();
+    if (!payload) {
+      $('message').textContent = 'Select a vessel and operator for summary.';
+      return;
+    }
+    const summaryPayload = {
+      vessel: payload.vessel,
+      operator: payload.operator,
+      persons: payload.persons,
+      itinerary: payload.itinerary,
+      rescue_authority: payload.rescue_authority,
+      rescue_authority_phone: payload.rescue_authority_phone,
+      contact1: payload.contact1,
+      contact1_phone: payload.contact1_phone,
+      contact2: payload.contact2,
+      contact2_phone: payload.contact2_phone
+    };
+    try {
+      const res = await fetch('/api/summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+        body: JSON.stringify(summaryPayload)
+      });
+      if (!res.ok) throw new Error('Failed to load summary');
+      const data = await res.json();
+      $('summary-text').value = data.text || '';
+      $('summary-modal').removeAttribute('hidden');
+    } catch (err) {
+      $('message').textContent = 'Error: ' + (err.message || 'Failed to load summary');
+    }
+  });
+
+  $('summary-copy').addEventListener('click', async () => {
+    var ta = $('summary-text');
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(ta.value);
+      } else {
+        ta.select();
+        ta.setSelectionRange(0, 99999);
+        document.execCommand('copy');
+      }
+      $('message').textContent = 'Copied to clipboard.';
+    } catch (e) {
+      $('message').textContent = 'Copy failed. Select the text and copy manually.';
+    }
+  });
+
+  $('summary-close').addEventListener('click', () => {
+    $('summary-modal').setAttribute('hidden', '');
+  });
+
+  function getVesselFormData() {
+    var form = $('add-vessel-form');
+    var boolKeysStr = form.getAttribute('data-bool-keys') || '';
+    var boolKeys = boolKeysStr ? boolKeysStr.split(',') : [];
+    var obj = {};
+    form.querySelectorAll('input, select').forEach(function(el) {
+      var k = el.name;
+      if (!k) return;
+      if (boolKeys.indexOf(k) !== -1) {
+        obj[k] = el.checked;
+      } else if (el.type === 'checkbox') {
+        obj[k] = el.checked ? 'Yes' : '';
+      } else {
+        obj[k] = (el.value || '').trim();
+      }
+    });
+    var nameVal = (obj.id_vessel_name || obj.name || '').trim() || 'Unnamed';
+    obj.name = nameVal;
+    obj.id_vessel_name = nameVal;
+    obj.id = '';
+    return obj;
+  }
+
+  $('add-vessel-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var vessel = getVesselFormData();
+    state.vessels.push(vessel);
+    $('add-vessel-modal').setAttribute('hidden', '');
+    $('add-vessel-form').reset();
+    $('new_vessel_name').value = '';
+    renderVesselSelect();
+    $('message').textContent = 'Vessel added (save plan to keep it).';
+  });
+
+  $('add-vessel-modal-cancel').addEventListener('click', function() {
+    $('add-vessel-modal').setAttribute('hidden', '');
+  });
+  $('add-vessel-modal').addEventListener('click', function(ev) {
+    if (ev.target === $('add-vessel-modal')) $('add-vessel-modal').setAttribute('hidden', '');
+  });
+
+  function getCrewFormData() {
+    var form = $('add-crew-form');
+    var obj = {};
+    form.querySelectorAll('input, select').forEach(function(el) {
+      var k = el.name;
+      if (!k) return;
+      if (k === 'pfd') {
+        obj[k] = el.checked ? 'Yes' : '';
+      } else {
+        obj[k] = (el.value || '').trim();
+      }
+    });
+    return obj;
+  }
+
+  $('add-crew-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var person = getCrewFormData();
+    state.crewMembers.push(person);
+    $('add-crew-modal').setAttribute('hidden', '');
+    $('add-crew-form').reset();
+    $('new_crew_name').value = '';
+    renderOperatorSelect();
+    renderOnBoard();
+    $('message').textContent = 'Crew member added (save plan to keep them).';
+  });
+
+  $('add-crew-modal-cancel').addEventListener('click', function() {
+    $('add-crew-modal').setAttribute('hidden', '');
+  });
+  $('add-crew-modal').addEventListener('click', function(ev) {
+    if (ev.target === $('add-crew-modal')) $('add-crew-modal').setAttribute('hidden', '');
   });
 
   loadData();
