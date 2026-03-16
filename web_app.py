@@ -272,6 +272,7 @@ def _security_headers(response):
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Access-Control-Allow-Origin"] = "https://svburnttoast.com"
     return response
 
 
