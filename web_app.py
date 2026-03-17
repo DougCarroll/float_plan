@@ -411,13 +411,25 @@ def load_user(user_id):
         return None
 
 
+def _cors_allow_origin():
+    """Allow svburnttoast.com, Cloudflare Pages (*.pages.dev), and localhost for status check."""
+    origin = request.headers.get("Origin") or ""
+    if origin == "https://svburnttoast.com":
+        return origin
+    if ".pages.dev" in origin:
+        return origin
+    if origin.startswith("http://localhost") or origin.startswith("http://127.0.0.1"):
+        return origin
+    return "https://svburnttoast.com"
+
+
 @app.after_request
 def _security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Access-Control-Allow-Origin"] = "https://svburnttoast.com"
+    response.headers["Access-Control-Allow-Origin"] = _cors_allow_origin()
     return response
 
 
