@@ -47,6 +47,24 @@ def _normalize_phone(s: str | None) -> str:
     return str(s).strip()
 
 
+def _normalize_phone_local(s: str | None) -> str:
+    """Format phone for PDF Passenger/Crew home phone fields without leading +1.
+
+    Expected format: (XXX) XXX-XXXX for 10-digit US numbers.
+    """
+    if not s:
+        return ""
+    digits = "".join(c for c in str(s).strip() if c.isdigit())
+    # Strip US country code if provided
+    if len(digits) == 11 and digits[0] == "1":
+        digits = digits[1:]
+    if len(digits) == 10:
+        return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+    if len(digits) == 7:
+        return f"({digits[:3]}) {digits[3:]}"
+    return str(s).strip()
+
+
 def build_field_map(vessel: dict, crew: dict, itinerary: list[dict]) -> dict[str, str]:
     """Build PDF field name -> value map for the current template."""
     out: dict[str, str] = {}
@@ -163,7 +181,8 @@ def build_field_map(vessel: dict, crew: dict, itinerary: list[dict]) -> dict[str
         out[f"POB-{n}Name"] = _str(p.get("name"))
         out[f"POB-{n}Age"] = _str(p.get("age"))
         out[f"POB-{n}Gender"] = _gender(p.get("gender"))
-        out[f"POB-{n}HomePhone"] = _normalize_phone(p.get("home_phone"))
+        # Passengers/Crew home phone: omit "+1" for field fit
+        out[f"POB-{n}HomePhone"] = _normalize_phone_local(p.get("home_phone"))
         out[f"POB-{n}Note"] = _str(p.get("note"))
         out[f"POB-{n}PFD"] = _checkbox(p.get("pfd") in (True, "yes", "Yes"))
         out[f"POB-{n}PLBnum"] = _str(p.get("plb_uin"))
