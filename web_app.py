@@ -412,9 +412,9 @@ def load_user(user_id):
 
 
 def _cors_allow_origin():
-    """Allow svburnttoast.com, Cloudflare Pages (*.pages.dev), and localhost for status check."""
+    """Allow svburnttoast.com (apex + www), Cloudflare Pages (*.pages.dev), and localhost for status check."""
     origin = request.headers.get("Origin") or ""
-    if origin == "https://svburnttoast.com":
+    if origin in ("https://svburnttoast.com", "https://www.svburnttoast.com"):
         return origin
     if ".pages.dev" in origin:
         return origin
