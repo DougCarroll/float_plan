@@ -19,6 +19,14 @@ def _checkbox(v: bool) -> str:
     return "/Yes" if v else ""
 
 
+def _experience_checked(v: str | bool | int | None) -> bool:
+    """True if operator vessel/area experience is set (desktop/web use 'Yes' or booleans)."""
+    if v is True or v == 1:
+        return True
+    s = str(v).strip().lower()
+    return s in ("yes", "1", "true")
+
+
 def _gender(v: str | None) -> str:
     """Normalize to PDF choice option: 'M', 'F', or ' ' (blank)."""
     if not v:
@@ -170,8 +178,9 @@ def build_field_map(vessel: dict, crew: dict, itinerary: list[dict]) -> dict[str
     out["OPR-VehicleLicenseNum"] = _str(op.get("vehicle_license_num"))
     out["OPR-VehicleParkedAt"] = _str(op.get("vehicle_parked_at"))
     out["OPR-VesselTrailored"] = _str(op.get("vessel_trailored"))
-    out["OPR-AreaExperience"] = _str(op.get("area_experience"))
-    out["OPR-VesselExperience"] = _str(op.get("vessel_experience"))
+    # PDF uses checkbox widgets; export value is /Yes (not plain text "Yes")
+    out["OPR-AreaExperience"] = _checkbox(_experience_checked(op.get("area_experience")))
+    out["OPR-VesselExperience"] = _checkbox(_experience_checked(op.get("vessel_experience")))
     out["OPR-Float Plan Note"] = _str(op.get("float_plan_note"))
 
     # ---- Persons on board POB-01 .. POB-12 ----
