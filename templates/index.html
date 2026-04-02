@@ -71,19 +71,23 @@
       </div>
       <div class="field">
         <label for="contact1">Contact 1</label>
-        <input type="text" id="contact1" name="contact1">
+        <input type="text" id="contact1" name="contact1" list="contact1_history_list" autocomplete="off">
+        <datalist id="contact1_history_list"></datalist>
       </div>
       <div class="field">
         <label for="contact1_phone">Contact 1 phone</label>
-        <input type="text" id="contact1_phone" name="contact1_phone">
+        <input type="text" id="contact1_phone" name="contact1_phone" list="contact1_phone_history_list" autocomplete="off">
+        <datalist id="contact1_phone_history_list"></datalist>
       </div>
       <div class="field">
         <label for="contact2">Contact 2</label>
-        <input type="text" id="contact2" name="contact2">
+        <input type="text" id="contact2" name="contact2" list="contact2_history_list" autocomplete="off">
+        <datalist id="contact2_history_list"></datalist>
       </div>
       <div class="field">
         <label for="contact2_phone">Contact 2 phone</label>
-        <input type="text" id="contact2_phone" name="contact2_phone">
+        <input type="text" id="contact2_phone" name="contact2_phone" list="contact2_phone_history_list" autocomplete="off">
+        <datalist id="contact2_phone_history_list"></datalist>
       </div>
     </section>
 
@@ -203,6 +207,98 @@
     legs: []
   };
 
+  var LS_CONTACT_HISTORY = 'floatPlan_contactHistory_v1';
+
+  /** Itinerary dates in state are YYYY-MM-DD (for date inputs). PDF/desktop use MM/DD/YYYY. */
+  function dateToIsoFromAny(s) {
+    if (!s || !String(s).trim()) return '';
+    s = String(s).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) return m[3] + '-' + m[1].padStart(2, '0') + '-' + m[2].padStart(2, '0');
+    return '';
+  }
+
+  function isoToMMDD(iso) {
+    if (!iso || !String(iso).trim()) return '';
+    var m = String(iso).trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return '';
+    return m[2] + '/' + m[3] + '/' + m[1];
+  }
+
+  /** Default save/PDF filename stem: mm_dd_yyyy from first leg depart date, else today. */
+  function defaultFilenameDateStem() {
+    var leg0 = state.legs && state.legs[0];
+    if (leg0) {
+      var iso = dateToIsoFromAny(leg0.depart_date || '');
+      if (iso) {
+        var parts = iso.split('-');
+        if (parts.length === 3) {
+          return parts[1] + '_' + parts[2] + '_' + parts[0];
+        }
+      }
+    }
+    var d = new Date();
+    var mm = String(d.getMonth() + 1).padStart(2, '0');
+    var dd = String(d.getDate()).padStart(2, '0');
+    var yyyy = d.getFullYear();
+    return mm + '_' + dd + '_' + yyyy;
+  }
+
+  function itineraryLegsForSaveAndApi() {
+    return state.legs.map(function(leg) {
+      return {
+        depart_date: isoToMMDD(leg.depart_date) || (leg.depart_date || ''),
+        depart_time: leg.depart_time || '',
+        depart_location: leg.depart_location || '',
+        depart_mode: leg.depart_mode || '',
+        arrive_date: isoToMMDD(leg.arrive_date) || (leg.arrive_date || ''),
+        arrive_time: leg.arrive_time || '',
+        arrive_location: leg.arrive_location || '',
+        arrive_reason: leg.arrive_reason || '',
+        arrive_checkin_time: leg.arrive_checkin_time || ''
+      };
+    });
+  }
+
+  function loadContactHistory() {
+    try {
+      return JSON.parse(localStorage.getItem(LS_CONTACT_HISTORY) || '{}');
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function refreshContactDatalists() {
+    [['contact1', 'contact1_history_list'], ['contact1_phone', 'contact1_phone_history_list'], ['contact2', 'contact2_history_list'], ['contact2_phone', 'contact2_phone_history_list']].forEach(function(item) {
+      var field = item[0];
+      var dlId = item[1];
+      var dl = document.getElementById(dlId);
+      if (!dl) return;
+      dl.innerHTML = '';
+      var h = loadContactHistory();
+      (h[field] || []).forEach(function(opt) {
+        var o = document.createElement('option');
+        o.value = opt;
+        dl.appendChild(o);
+      });
+    });
+  }
+
+  function rememberContactField(fieldId) {
+    var el = $(fieldId);
+    if (!el) return;
+    var v = (el.value || '').trim();
+    if (!v) return;
+    var h = loadContactHistory();
+    var list = h[fieldId] || [];
+    if (list.indexOf(v) !== -1) return;
+    list.unshift(v);
+    h[fieldId] = list.slice(0, 20);
+    localStorage.setItem(LS_CONTACT_HISTORY, JSON.stringify(h));
+    refreshContactDatalists();
+  }
+
   function $(id) { return document.getElementById(id); }
   function csrfHeader() {
     var meta = document.querySelector('meta[name="csrf-token"]');
@@ -227,6 +323,7 @@
     renderOperatorSelect();
     renderOnBoard();
     renderRescueInput();
+    refreshContactDatalists();
     if (state.legs.length === 0) addLeg();
     else renderLegs();
   }
@@ -319,31 +416,35 @@
           <button type="button" class="btn btn-small" data-remove="${idx}">Remove</button>
         </div>
         <div class="leg-grid">
-          <div class="field">
-            <label>Depart date</label>
-            <input type="text" data-leg="${idx}" data-key="depart_date" placeholder="MM/DD/YYYY" value="${escapeAttr(leg.depart_date)}">
-          </div>
-          <div class="field">
-            <label>Depart time</label>
-            <input type="text" data-leg="${idx}" data-key="depart_time" placeholder="HH:MM" value="${escapeAttr(leg.depart_time)}">
+          <div class="leg-row-datetime">
+            <div class="field">
+              <label>Depart date</label>
+              <input type="date" class="input-date" data-leg="${idx}" data-key="depart_date" value="${escapeAttr(dateToIsoFromAny(leg.depart_date) || '')}">
+            </div>
+            <div class="field">
+              <label>Depart time</label>
+              <input type="text" data-leg="${idx}" data-key="depart_time" placeholder="HH:MM" value="${escapeAttr(leg.depart_time)}">
+            </div>
           </div>
           <div class="field field-wide">
             <label>Depart location</label>
             <input type="text" data-leg="${idx}" data-key="depart_location" value="${escapeAttr(leg.depart_location)}">
           </div>
-          <div class="field">
+          <div class="field field-wide">
             <label>Mode</label>
             <select data-leg="${idx}" data-key="depart_mode">
               ${state.departModeOptions.map(o => `<option value="${escapeAttr(o)}" ${leg.depart_mode === o ? 'selected' : ''}>${escapeHtml(o || '—')}</option>`).join('')}
             </select>
           </div>
-          <div class="field">
-            <label>Arrive date</label>
-            <input type="text" data-leg="${idx}" data-key="arrive_date" placeholder="MM/DD/YYYY" value="${escapeAttr(leg.arrive_date)}">
-          </div>
-          <div class="field">
-            <label>Arrive time</label>
-            <input type="text" data-leg="${idx}" data-key="arrive_time" placeholder="HH:MM" value="${escapeAttr(leg.arrive_time)}">
+          <div class="leg-row-datetime">
+            <div class="field">
+              <label>Arrive date</label>
+              <input type="date" class="input-date" data-leg="${idx}" data-key="arrive_date" value="${escapeAttr(dateToIsoFromAny(leg.arrive_date) || '')}">
+            </div>
+            <div class="field">
+              <label>Arrive time</label>
+              <input type="text" data-leg="${idx}" data-key="arrive_time" placeholder="HH:MM" value="${escapeAttr(leg.arrive_time)}">
+            </div>
           </div>
           <div class="field field-wide">
             <label>Arrive location</label>
@@ -405,7 +506,7 @@
       vessel: vessel,
       operator: operator,
       persons: persons,
-      itinerary: state.legs,
+      itinerary: itineraryLegsForSaveAndApi(),
       rescue_authority: $('rescue_authority').value.trim(),
       rescue_authority_phone: $('rescue_authority_phone').value.trim(),
       contact1: $('contact1').value.trim(),
@@ -436,19 +537,7 @@
       vessel_name: vesselName,
       operator_name: operatorName,
       on_board_names: onBoardNames,
-      itinerary: state.legs.map(function(leg) {
-        return {
-          depart_date: leg.depart_date || '',
-          depart_time: leg.depart_time || '',
-          depart_location: leg.depart_location || '',
-          depart_mode: leg.depart_mode || '',
-          arrive_date: leg.arrive_date || '',
-          arrive_time: leg.arrive_time || '',
-          arrive_location: leg.arrive_location || '',
-          arrive_reason: leg.arrive_reason || '',
-          arrive_checkin_time: leg.arrive_checkin_time || ''
-        };
-      }),
+      itinerary: itineraryLegsForSaveAndApi(),
       rescue_authority: $('rescue_authority').value.trim(),
       rescue_authority_phone: $('rescue_authority_phone').value.trim(),
       contact1: $('contact1').value.trim(),
@@ -460,26 +549,47 @@
     };
   }
 
-  function savePlan() {
+  async function savePlan() {
     const plan = buildPlanForSave();
     const blob = new Blob([JSON.stringify(plan, null, 2)], { type: 'application/json' });
+    const suggested = defaultFilenameDateStem() + '.floatplan';
+    if (typeof window.showSaveFilePicker === 'function') {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: suggested,
+          types: [{
+            description: 'Float plan',
+            accept: { 'application/json': ['.floatplan', '.json'] }
+          }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        $('message').textContent = 'Plan saved.';
+        ['contact1', 'contact1_phone', 'contact2', 'contact2_phone'].forEach(function(id) { rememberContactField(id); });
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+      }
+    }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'float_plan.floatplan';
+    a.download = suggested;
     a.click();
     URL.revokeObjectURL(a.href);
     $('message').textContent = 'Plan saved.';
+    ['contact1', 'contact1_phone', 'contact2', 'contact2_phone'].forEach(function(id) { rememberContactField(id); });
   }
 
   function applyPlan(plan) {
     if (!plan || typeof plan !== 'object') return;
     state.legs = Array.isArray(plan.itinerary) ? plan.itinerary.map(function(leg) {
       return {
-        depart_date: leg.depart_date || '',
+        depart_date: dateToIsoFromAny(leg.depart_date || '') || '',
         depart_time: leg.depart_time || '',
         depart_location: leg.depart_location || '',
         depart_mode: leg.depart_mode || '',
-        arrive_date: leg.arrive_date || '',
+        arrive_date: dateToIsoFromAny(leg.arrive_date || '') || '',
         arrive_time: leg.arrive_time || '',
         arrive_location: leg.arrive_location || '',
         arrive_reason: leg.arrive_reason || '',
@@ -581,12 +691,16 @@
         throw new Error(err.error || res.statusText);
       }
       const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const pdfName = defaultFilenameDateStem() + '.pdf';
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'float_plan.pdf';
+      a.href = url;
+      a.download = pdfName;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(a.href);
-      $('message').textContent = 'PDF downloaded.';
+      document.body.removeChild(a);
+      setTimeout(function() { URL.revokeObjectURL(url); }, 2000);
+      $('message').textContent = 'PDF downloaded as ' + pdfName + '.';
     } catch (err) {
       $('message').textContent = 'Error: ' + (err.message || 'Failed to generate PDF');
     } finally {
@@ -598,6 +712,11 @@
 
   $('save-plan').addEventListener('click', function() {
     savePlan();
+  });
+
+  ['contact1', 'contact1_phone', 'contact2', 'contact2_phone'].forEach(function(id) {
+    var el = $(id);
+    if (el) el.addEventListener('blur', function() { rememberContactField(id); });
   });
   $('open-plan').addEventListener('click', function() {
     $('open-plan-file').click();
