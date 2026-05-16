@@ -50,6 +50,10 @@ cat > "$PLIST_DEST" <<EOF
 EOF
 
 echo "Wrote: $PLIST_DEST"
+echo
+echo "Required: $SCRIPT_DIR/.env must define SECRET_KEY=... (start-service.sh runs in production)."
+echo "  echo \"SECRET_KEY=\$(python3 -c 'import secrets; print(secrets.token_hex(32))')\" >> .env"
+echo
 
 echo "Reloading launchd job..."
 launchctl bootout "gui/${UID_NUM}" "$PLIST_DEST" 2>/dev/null || true
