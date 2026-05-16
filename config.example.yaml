@@ -1,8 +1,10 @@
 # Float Plan web app — copy to config.yaml and adjust.
 # Used by run_web.sh and gunicorn. Optional; defaults: host 127.0.0.1, port 5503.
 
-# When running behind a Cloudflare tunnel, bind to 127.0.0.1 and let cloudflared
-# proxy to this port. Use 0.0.0.0 only if you need direct external access.
+# Bind address for Gunicorn and for `python web_app.py`:
+# - 0.0.0.0 — listen on all interfaces (LAN, port-forward, Docker publish, or local Cloudflare).
+#   You can still aim cloudflared at http://127.0.0.1:PORT on this machine.
+# - 127.0.0.1 — loopback only (slightly stricter; tunnel on this host still works).
 web:
-  host: "127.0.0.1"
+  host: "0.0.0.0"
   port: 5503

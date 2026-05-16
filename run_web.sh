@@ -40,5 +40,6 @@ echo "Installing web dependencies..."
 "$PIP" install -q -r requirements-web.txt
 
 echo "Starting Float Plan web app on port $PORT..."
-echo "Point Cloudflare tunnel at http://127.0.0.1:$PORT (or use HOST=0.0.0.0 for direct access)."
+echo "Listen address: web.host in config.yaml and/or HOST in .env (see config.example.yaml)."
+echo "Cloudflared on this machine can still use http://127.0.0.1:$PORT when the app binds 0.0.0.0."
 exec "$PY" -m gunicorn -c gunicorn_config.py web_app:app

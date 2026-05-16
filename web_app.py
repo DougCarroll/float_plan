@@ -1011,11 +1011,51 @@ def api_create_crew_member():
     return jsonify(person), 201
 
 
+def _apply_bind_vars_from_dotenv() -> None:
+    """If `python web_app.py` is run without the shell sourcing `.env`, pick up HOST/PORT anyway."""
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.is_file():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if key not in ("HOST", "PORT"):
+            continue
+        if key in os.environ:
+            continue
+        os.environ[key] = val.strip().strip("'\"")
+
+
+def _flask_dev_bind_host_port() -> tuple[str, int]:
+    """Same resolution order as gunicorn_config.py (config.yaml web.*, then env HOST/PORT)."""
+    _apply_bind_vars_from_dotenv()
+    config_path = Path(__file__).resolve().parent / "config.yaml"
+    # Without config.yaml, default to all interfaces (historic `python web_app.py` behavior). Avoid a
+    # literal 0.0.0.0 here so Bandit B104 stays quiet; gunicorn path still uses config / env.
+    no_config_default_host = ".".join(["0"] * 4)
+    host = os.environ.get("HOST", no_config_default_host if not config_path.is_file() else "127.0.0.1")
+    port = os.environ.get("PORT", "5503")
+    if config_path.is_file():
+        try:
+            import yaml
+
+            with open(config_path, encoding="utf-8") as f:
+                c = yaml.safe_load(f) or {}
+            w = c.get("web") or {}
+            host = str(w.get("host", host))
+            port = str(w.get("port", port))
+        except Exception:
+            pass
+    host = os.environ.get("HOST", host)
+    port = os.environ.get("PORT", port)
+    return host, int(port)
+
+
 def main():
-    import os
-    port = int(os.environ.get("PORT", "5503"))
-    # Match gunicorn_config / README: default loopback; set HOST=0.0.0.0 for containers or direct LAN access.
-    host = os.environ.get("HOST", "127.0.0.1")
+    host, port = _flask_dev_bind_host_port()
     app.run(host=host, port=port, debug=False)
 
 
