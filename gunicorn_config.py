@@ -19,7 +19,12 @@ if os.path.exists(config_path):
 host = os.environ.get("HOST", host)
 port = os.environ.get("PORT", port)
 
-bind = f"{host}:{port}"
+# macOS: cloudflared often uses "http://localhost:PORT", which may resolve to IPv6 [::1] first.
+# If we only bind 127.0.0.1 (IPv4), the tunnel sees connection refused. Listen on ::1 too.
+if host in ("127.0.0.1", "0.0.0.0"):
+    bind = [f"{host}:{port}", f"[::1]:{port}"]
+else:
+    bind = f"{host}:{port}"
 backlog = 2048
 workers = 1
 worker_class = "sync"
