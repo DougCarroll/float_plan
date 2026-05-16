@@ -1014,7 +1014,9 @@ def api_create_crew_member():
 def main():
     import os
     port = int(os.environ.get("PORT", "5503"))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    # Match gunicorn_config / README: default loopback; set HOST=0.0.0.0 for containers or direct LAN access.
+    host = os.environ.get("HOST", "127.0.0.1")
+    app.run(host=host, port=port, debug=False)
 
 
 if __name__ == "__main__":
