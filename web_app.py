@@ -35,6 +35,25 @@ from data_store import (
 from pdf_fill import fill_float_plan
 
 
+def _env_truthy(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _is_production_deployment() -> bool:
+    return _env_truthy("PRODUCTION") or os.environ.get("FLASK_ENV", "").strip().lower() == "production"
+
+
+def _maybe_trust_proxy(app: Flask) -> None:
+    """Honor X-Forwarded-* from Cloudflare tunnel / reverse proxy (opt-in; avoids header spoofing in dev)."""
+    if not _env_truthy("TRUST_PROXY"):
+        return
+    from werkzeug.middleware.proxy_fix import ProxyFix
+
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1
+    )
+
+
 def _normalize_date_string(s: str) -> str:
     """Zero-pad month/day for parsing (e.g. 3/3/2025 -> 03/03/2025)."""
     s = (s or "").strip()
@@ -253,32 +272,55 @@ app = Flask(__name__, template_folder=str(APP_DIR / "templates"), static_folder=
 # Limit request body to reduce DoS risk (PDF/summary JSON can be large but bounded)
 app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024  # 4 MB
 
-# Session cookie hardening (app runs behind HTTPS via tunnel in production)
+# Session cookie hardening (HTTPS via tunnel / reverse proxy in production)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-if os.environ.get("PREFER_HTTPS", "").strip().lower() in ("1", "true", "yes"):
+if (
+    _env_truthy("PREFER_HTTPS")
+    or _is_production_deployment()
+    or _env_truthy("SESSION_COOKIE_SECURE")
+):
     app.config["SESSION_COOKIE_SECURE"] = True
 
-# SECRET_KEY for sessions (Flask-Login). From env, or persisted file so you set it once (or never).
+# SECRET_KEY for sessions (Flask-Login). In production (or REQUIRE_ENV_SECRET=1), env-only — no data/.flask_secret.
 _INSECURE_KEYS = ("", "change_this_secret_key")
 _SECRET_FILE = APP_DIR / "data" / ".flask_secret"
-app.secret_key = os.environ.get("SECRET_KEY", "").strip()
-if not app.secret_key or app.secret_key in _INSECURE_KEYS:
-    # Try persisted key (created on first run so you don't have to set SECRET_KEY every time)
-    if _SECRET_FILE.exists():
-        try:
-            app.secret_key = _SECRET_FILE.read_text().strip()
-        except OSError:
-            pass
+_secret_env = os.environ.get("SECRET_KEY", "").strip()
+_strict_secret = _is_production_deployment() or _env_truthy("REQUIRE_ENV_SECRET")
+if _strict_secret:
+    if not _secret_env or _secret_env in _INSECURE_KEYS:
+        print(
+            "ERROR: SECRET_KEY must be set in the environment for production "
+            "(PRODUCTION=1 / FLASK_ENV=production) or when REQUIRE_ENV_SECRET=1. "
+            "Do not rely on data/.flask_secret in those modes.",
+            file=sys.stderr,
+        )
+        print("  export SECRET_KEY=\"$(python3 -c \"import secrets; print(secrets.token_hex(32))\")\"", file=sys.stderr)
+        sys.exit(1)
+    app.secret_key = _secret_env
+else:
+    app.secret_key = _secret_env
     if not app.secret_key or app.secret_key in _INSECURE_KEYS:
-        import secrets
-        app.secret_key = secrets.token_hex(32)
-        _SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            _SECRET_FILE.write_text(app.secret_key)
-        except OSError:
-            pass
-        print("Created persistent secret key in data/.flask_secret (no need to set SECRET_KEY).", file=sys.stderr)
+        if _SECRET_FILE.exists():
+            try:
+                app.secret_key = _SECRET_FILE.read_text().strip()
+            except OSError:
+                pass
+        if not app.secret_key or app.secret_key in _INSECURE_KEYS:
+            import secrets
+
+            app.secret_key = secrets.token_hex(32)
+            _SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                _SECRET_FILE.write_text(app.secret_key)
+            except OSError:
+                pass
+            print(
+                "Created persistent secret key in data/.flask_secret (dev convenience; set SECRET_KEY in prod).",
+                file=sys.stderr,
+            )
+
+_maybe_trust_proxy(app)
 
 csrf = CSRFProtect(app)
 
@@ -290,11 +332,16 @@ def _handle_413(e):
     return e.get_response()
 
 
+_rate_limit_storage = (
+    (os.environ.get("RATE_LIMIT_STORAGE_URI") or "").strip()
+    or (os.environ.get("REDIS_URL") or "").strip()
+    or "memory://"
+)
 limiter = Limiter(
     get_remote_address,
     app=app,
     default_limits=["200 per day", "60 per minute"],
-    storage_uri="memory://",
+    storage_uri=_rate_limit_storage,
 )
 
 # SQLite DB for users (mirrors anchor_watch pattern, but only user/group here).

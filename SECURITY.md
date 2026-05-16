@@ -66,13 +66,14 @@ Float Plan web app is intended to run behind a **Cloudflare tunnel** (e.g. cloud
 
 - **SESSION_COOKIE_HTTPONLY** — True (script cannot read session cookie).
 - **SESSION_COOKIE_SAMESITE** — Lax (reduces CSRF from cross-site requests).
-- **SESSION_COOKIE_SECURE** — Set to True when **PREFER_HTTPS** env is `1`, `true`, or `yes` (cookie sent only over HTTPS). Enable in production when the app is behind HTTPS (e.g. Cloudflare tunnel).
+- **SESSION_COOKIE_SECURE** — Set to True when **`PREFER_HTTPS`**, **`PRODUCTION` / `FLASK_ENV=production`**, or **`SESSION_COOKIE_SECURE`** env is truthy (HTTPS at the edge, e.g. Cloudflare tunnel). Use plain HTTP locally without those flags.
+- **Reverse proxy** — Set **`TRUST_PROXY=1`** when the app sits behind a tunnel or reverse proxy that sends **`X-Forwarded-Proto: https`** so Flask sees the external scheme (optional but helps URL generation). Enable only on trusted hops.
 
 ---
 
 ## Secrets and config
 
-- **SECRET_KEY** — Set via environment in production; do not commit. If unset or obviously default, the app may create/reuse `data/.flask_secret`.
+- **SECRET_KEY** — **Required in production:** if **`PRODUCTION=1`**, **`FLASK_ENV=production`**, or **`REQUIRE_ENV_SECRET=1`**, `SECRET_KEY` must be set in the environment; the app will **not** create or use `data/.flask_secret`. For local dev without those flags, a file-backed secret in **`data/.flask_secret`** may still be created when `SECRET_KEY` is unset.
 - **Config** — `config.yaml` is in `.gitignore`; use `config.example.yaml` as a template if present.
 - **Default user** — First run creates user `fp` (admin) with password from **FP_DEFAULT_PASSWORD** env or a default; change after first login if using the default.
 
@@ -94,7 +95,7 @@ Float Plan web app is intended to run behind a **Cloudflare tunnel** (e.g. cloud
 - **Redirects** — Login `next` restricted to relative path, no `//`, no CR/LF.
 - **Input** — Vessel/crew keys restricted to schema; indices bounds-checked; no raw SQL.
 - **Headers** — Nosniff, frame options, XSS filter, referrer policy, CSP (`_FLOAT_PLAN_CSP`); CORS allowlist (svburnttoast.com, `*.pages.dev`, localhost).
-- **Rate limiting** — Global and login-specific limits.
+- **Rate limiting** — Global and login-specific limits. With multiple Gunicorn workers, set **`RATE_LIMIT_STORAGE_URI`** or **`REDIS_URL`** to a shared Redis URL (defaults to in-memory).
 - **DoS** — MAX_CONTENT_LENGTH and 413 handler for APIs; exceptions not echoed in 500 responses.
 - **XSS** — Escaping in templates and in client-side rendering.
 
@@ -110,10 +111,10 @@ Float Plan web app is intended to run behind a **Cloudflare tunnel** (e.g. cloud
 | Login redirect | `next` allowed only relative path, no `//`, no `\n`/`\r`. |
 | Input | Vessel/crew keys restricted to DEFAULT_*; indices bounds-checked; ORM only. |
 | Headers | X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Referrer-Policy, CSP; CORS allowlist: svburnttoast apex/www, `Origin` containing `.pages.dev`, localhost/127.0.0.1; else ACAO defaults to `https://svburnttoast.com`. |
-| Rate limit | 200/day, 60/min; login 5/min. |
+| Rate limit | 200/day, 60/min; login 5/min; use Redis (`RATE_LIMIT_STORAGE_URI` / `REDIS_URL`) with multiple workers. |
 | DoS | MAX_CONTENT_LENGTH 4 MB; 413 handler; 500 responses generic. |
 | XSS | Jinja auto-escape; `\| e` in delete forms; client escapeAttr/escapeHtml. |
-| Session | HttpOnly, SameSite=Lax; Secure when PREFER_HTTPS set. |
+| Session | HttpOnly, SameSite=Lax; Secure when PREFER_HTTPS / PRODUCTION / FLASK_ENV=production / SESSION_COOKIE_SECURE; env-only SECRET_KEY in prod modes. |
 | Passwords | pbkdf2_sha256; not logged. |
 
 ---
@@ -121,7 +122,6 @@ Float Plan web app is intended to run behind a **Cloudflare tunnel** (e.g. cloud
 ## Optional hardening
 
 - **Narrow CORS for Pages** — If `*.pages.dev` is too broad, allow only your production Pages hostname(s) (e.g. `https://float-plan.pages.dev`) in `_cors_allow_origin()`.
-- **Stricter SECRET_KEY** — Exit on startup if SECRET_KEY is default for production.
 - **Password policy** — Enforce minimum length or complexity when creating users.
 - **Audit logging** — Log admin actions (user create/delete/role change) and optionally vessel/crew changes.
 - **pip-audit** — Run `pip audit` (e.g. in `run_web.sh`) to check dependencies for known vulnerabilities.
