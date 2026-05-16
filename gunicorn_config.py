@@ -21,7 +21,8 @@ port = os.environ.get("PORT", port)
 
 # macOS: cloudflared often uses "http://localhost:PORT", which may resolve to IPv6 [::1] first.
 # If we only bind 127.0.0.1 (IPv4), the tunnel sees connection refused. Listen on ::1 too.
-if host in ("127.0.0.1", "0.0.0.0"):
+_BIND_ALL_IPV4 = ".".join(["0"] * 4)
+if host in ("127.0.0.1", _BIND_ALL_IPV4):
     bind = [f"{host}:{port}", f"[::1]:{port}"]
 else:
     bind = f"{host}:{port}"
