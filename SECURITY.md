@@ -27,7 +27,7 @@ Float Plan web app is intended to run behind a **Cloudflare tunnel** (e.g. cloud
 
 - **CSRF** — Flask-WTF **CSRFProtect** is enabled. State-changing forms use `csrf_token()`. API calls from the plan page send **X-CSRFToken** from `<meta name="csrf-token">`.
 - **Security headers** (all responses): `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `X-XSS-Protection: 1; mode=block`, `Referrer-Policy: strict-origin-when-cross-origin`.
-- **CORS** — `Access-Control-Allow-Origin` is set to a specific origin (e.g. `https://svburnttoast.com`). Change or remove if the app is served from another domain.
+- **CORS** — `Access-Control-Allow-Origin` is chosen from the request **`Origin`** header when it matches an allowlist: **`https://svburnttoast.com`**, **`https://www.svburnttoast.com`**, any origin whose URL **contains** **`.pages.dev`** (Cloudflare Pages previews/production), and **`http://localhost…`** / **`http://127.0.0.1…`** for local dev. If there is no match, the header is still set to **`https://svburnttoast.com`**. Implementation: `_cors_allow_origin()` in `web_app.py`. To **narrow** Pages deploys (instead of any `*.pages.dev`-style URL), replace the substring check with your fixed **`https://your-project.pages.dev`** URL(s).
 
 ---
 
@@ -93,7 +93,7 @@ Float Plan web app is intended to run behind a **Cloudflare tunnel** (e.g. cloud
 - **Paths** — User data under `data/users/<username>/` with resolve/relative_to and safe username validation.
 - **Redirects** — Login `next` restricted to relative path, no `//`, no CR/LF.
 - **Input** — Vessel/crew keys restricted to schema; indices bounds-checked; no raw SQL.
-- **Headers** — Nosniff, frame options, XSS filter, referrer policy; CORS set to a single origin.
+- **Headers** — Nosniff, frame options, XSS filter, referrer policy; CORS allowlist (svburnttoast.com, `*.pages.dev`, localhost).
 - **Rate limiting** — Global and login-specific limits.
 - **DoS** — MAX_CONTENT_LENGTH and 413 handler for APIs; exceptions not echoed in 500 responses.
 - **XSS** — Escaping in templates and in client-side rendering.
@@ -109,7 +109,7 @@ Float Plan web app is intended to run behind a **Cloudflare tunnel** (e.g. cloud
 | Paths | `data/users/<username>/` with resolve/relative_to; username validated (no `..`, `/`, `\`, max 80 chars). |
 | Login redirect | `next` allowed only relative path, no `//`, no `\n`/`\r`. |
 | Input | Vessel/crew keys restricted to DEFAULT_*; indices bounds-checked; ORM only. |
-| Headers | X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Referrer-Policy; CORS single origin. |
+| Headers | X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Referrer-Policy; CORS allowlist: svburnttoast apex/www, `Origin` containing `.pages.dev`, localhost/127.0.0.1; else ACAO defaults to `https://svburnttoast.com`. |
 | Rate limit | 200/day, 60/min; login 5/min. |
 | DoS | MAX_CONTENT_LENGTH 4 MB; 413 handler; 500 responses generic. |
 | XSS | Jinja auto-escape; `\| e` in delete forms; client escapeAttr/escapeHtml. |
@@ -120,6 +120,7 @@ Float Plan web app is intended to run behind a **Cloudflare tunnel** (e.g. cloud
 
 ## Optional hardening
 
+- **Narrow CORS for Pages** — If `*.pages.dev` is too broad, allow only your production Pages hostname(s) (e.g. `https://float-plan.pages.dev`) in `_cors_allow_origin()`.
 - **Stricter SECRET_KEY** — Exit on startup if SECRET_KEY is default for production.
 - **Password policy** — Enforce minimum length or complexity when creating users.
 - **Audit logging** — Log admin actions (user create/delete/role change) and optionally vessel/crew changes.
