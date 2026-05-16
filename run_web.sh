@@ -20,20 +20,20 @@ fi
 PY="$VENV_DIR/bin/python"
 PIP="$VENV_DIR/bin/pip"
 
-# Port from config.yaml (web.port) or env (default 5000)
+# Port from config.yaml (web.port) or env (default 5503)
 if [ -f config.yaml ] && "$PY" -c "import yaml" 2>/dev/null; then
   PORT_FROM_CONFIG=$("$PY" -c "
 import yaml
 try:
     with open('config.yaml') as f:
         c = yaml.safe_load(f)
-    print((c.get('web') or {}).get('port', 5000))
+    print((c.get('web') or {}).get('port', 5503))
 except Exception:
-    print(5000)
+    print(5503)
 " 2>/dev/null) || true
-  export PORT="${PORT:-${PORT_FROM_CONFIG:-5000}}"
+  export PORT="${PORT:-${PORT_FROM_CONFIG:-5503}}"
 else
-  export PORT="${PORT:-5000}"
+  export PORT="${PORT:-5503}"
 fi
 
 echo "Installing web dependencies..."

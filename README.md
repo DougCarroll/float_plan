@@ -54,11 +54,11 @@ The same vessel/crew data and PDF generation are available as a web app, so you 
 ./run_web.sh
 ```
 
-This installs web dependencies (Flask, gunicorn, PyYAML) into the same `.venv`, then starts the web app. Default port is 5000; override with `PORT=5100 ./run_web.sh` or use a `config.yaml` (copy from `config.example.yaml`) with `web.port` and optional `web.host`.
+This installs web dependencies (Flask, gunicorn, PyYAML) into the same `.venv`, then starts the web app. Default port is 5503; override with `PORT=5503 ./run_web.sh` or use a `config.yaml` (copy from `config.example.yaml`) with `web.port` and optional `web.host`.
 
-- **URL:** `http://127.0.0.1:5000` (or your configured host/port). The page lets you select vessel and operator, choose who’s on board, add itinerary legs, set rescue authority and contacts, and **Generate PDF** to download the filled form.
+- **URL:** `http://127.0.0.1:5503` (or your configured host/port). The page lets you select vessel and operator, choose who’s on board, add itinerary legs, set rescue authority and contacts, and **Generate PDF** to download the filled form.
 - **Data:** Vessels and crew are read from the same `data/` directory as the desktop app. Add or edit vessels/crew with the desktop app; the web app is for filling a plan and generating the PDF.
-- **Cloudflare:** Run your tunnel (e.g. `cloudflared tunnel --url http://127.0.0.1:5000`) and optionally protect the URL with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/). Keep the app bound to `127.0.0.1` so it is only reachable via the tunnel.
+- **Cloudflare:** Run your tunnel (e.g. `cloudflared tunnel --url http://127.0.0.1:5503`) and optionally protect the URL with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/). Keep the app bound to `127.0.0.1` so it is only reachable via the tunnel.
 
 **Run as a service (macOS):** Like [anchor_watch](../anchor_watch), you can run the web app under launchd so it starts at login and restarts if it exits. Optionally create a `.env` in the project root with `SECRET_KEY=...` and `PORT=...`; if you don’t, the app will create and reuse a key in `data/.flask_secret` on first run, and both `run_web.sh` and `start-service.sh` source `.env` so you only set it once. Run `./run_web.sh` once to create `.venv` and install dependencies, then:
 

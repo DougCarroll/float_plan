@@ -5,7 +5,7 @@ import os
 
 config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "config.yaml"))
 host = os.environ.get("HOST", "127.0.0.1")
-port = os.environ.get("PORT", "5000")
+port = os.environ.get("PORT", "5503")
 if os.path.exists(config_path):
     try:
         import yaml
