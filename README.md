@@ -66,7 +66,7 @@ This installs web dependencies (Flask, gunicorn, PyYAML) into the same `.venv`, 
 ./install_launchd.sh
 ```
 
-This installs a Launch Agent at `~/Library/LaunchAgents/com.floatplan.plist` and loads it. Logs go to `data/service.log` and `data/service.error.log`. To stop: `launchctl unload ~/Library/LaunchAgents/com.floatplan.plist`. To check: `launchctl list | grep floatplan`.
+This installs a Launch Agent at `~/Library/LaunchAgents/com.svburnttoast.floatplan.plist` with label **`com.svburnttoast.floatplan`** (legacy `com.floatplan` is removed on install). Logs go to `data/service.log` and `data/service.error.log`. To restart: `launchctl kickstart -k "gui/$(id -u)/com.svburnttoast.floatplan"`. To stop: `launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.svburnttoast.floatplan.plist`. To check: `launchctl list | grep svburnttoast.floatplan`.
 
 ## Git / GitHub — don’t push secrets
 

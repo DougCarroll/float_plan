@@ -1,24 +1,30 @@
 #!/bin/bash
 # Install/refresh the Float Plan launchd agent for this checkout.
-# Creates ~/Library/LaunchAgents/com.floatplan.plist pointing at start-service.sh,
-# then unloads/loads it so the service starts automatically.
+# Creates ~/Library/LaunchAgents/com.svburnttoast.floatplan.plist pointing at start-service.sh,
+# then bootstraps it so the service starts automatically.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLIST_DEST="$HOME/Library/LaunchAgents/com.floatplan.plist"
+LABEL="com.svburnttoast.floatplan"
+PLIST_DEST="$HOME/Library/LaunchAgents/${LABEL}.plist"
+UID_NUM="$(id -u)"
 
 mkdir -p "$HOME/Library/LaunchAgents"
 mkdir -p "$SCRIPT_DIR/data"
 
-echo "Installing launchd agent for Float Plan..."
+echo "Installing launchd agent for Float Plan (${LABEL})..."
+
+launchctl bootout "gui/${UID_NUM}" "$HOME/Library/LaunchAgents/com.floatplan.plist" 2>/dev/null || true
+launchctl bootout "gui/${UID_NUM}/com.floatplan" 2>/dev/null || true
+
 cat > "$PLIST_DEST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.floatplan</string>
+    <string>${LABEL}</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
@@ -46,13 +52,16 @@ EOF
 echo "Wrote: $PLIST_DEST"
 
 echo "Reloading launchd job..."
-launchctl unload "$PLIST_DEST" 2>/dev/null || true
-launchctl load "$PLIST_DEST"
+launchctl bootout "gui/${UID_NUM}" "$PLIST_DEST" 2>/dev/null || true
+launchctl bootstrap "gui/${UID_NUM}" "$PLIST_DEST"
 
 echo
 echo "Installed and loaded launch agent:"
 echo "  $PLIST_DEST"
 echo
 echo "You can check status with:"
-echo "  launchctl list | grep floatplan"
+echo "  launchctl list | grep svburnttoast.floatplan"
+echo
+echo "Restart:"
+echo "  launchctl kickstart -k \"gui/\$(id -u)/${LABEL}\""
 echo
