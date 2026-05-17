@@ -1,15 +1,12 @@
 #!/bin/bash
-# Minimal startup for launchd service: no pip/audit, just env + gunicorn.
-# Requires: .env with SECRET_KEY=... (or SECRET_KEY in launchd environment).
-# Run run_web.sh once to create .venv and install deps before enabling the service.
-
+# launchd: .env, ensure .venv + requirements-web.txt, then gunicorn (use run_web.sh for console).
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Load SECRET_KEY and optional overrides from .env
 if [ -f .env ]; then
   set -a
+  # shellcheck disable=SC1091
   source .env
   set +a
 fi
@@ -20,7 +17,6 @@ if [ "$(uname)" = "Darwin" ]; then
   export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
 fi
 
-# Match web_app.py: production requires SECRET_KEY (no data/.flask_secret fallback).
 _sk="${SECRET_KEY:-}"
 if [ -z "$_sk" ] || [ "$_sk" = "change_this_secret_key" ]; then
   echo "ERROR: SECRET_KEY must be set for Float Plan when using start-service.sh (launchd)." >&2
@@ -30,20 +26,7 @@ if [ -z "$_sk" ] || [ "$_sk" = "change_this_secret_key" ]; then
   exit 1
 fi
 
-VENV_DIR="${VENV_DIR:-$SCRIPT_DIR/.venv}"
-PY="$VENV_DIR/bin/python"
-if [ ! -x "$PY" ]; then
-  PY="$VENV_DIR/bin/python3"
-fi
-
-if [ ! -x "$PY" ]; then
-  echo "Error: venv not found at $VENV_DIR. Run ./run_web.sh once to create it." >&2
-  exit 1
-fi
-
-if ! "$PY" -c "import gunicorn" 2>/dev/null; then
-  echo "Error: gunicorn is not installed in venv. Run ./run_web.sh once." >&2
-  exit 1
-fi
+# shellcheck source=scripts/ensure_venv.sh
+source "$SCRIPT_DIR/scripts/ensure_venv.sh"
 
 exec "$PY" -m gunicorn -c gunicorn_config.py web_app:app
