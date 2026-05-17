@@ -32,9 +32,17 @@ fi
 
 VENV_DIR="${VENV_DIR:-$SCRIPT_DIR/.venv}"
 PY="$VENV_DIR/bin/python"
+if [ ! -x "$PY" ]; then
+  PY="$VENV_DIR/bin/python3"
+fi
 
 if [ ! -x "$PY" ]; then
   echo "Error: venv not found at $VENV_DIR. Run ./run_web.sh once to create it." >&2
+  exit 1
+fi
+
+if ! "$PY" -c "import gunicorn" 2>/dev/null; then
+  echo "Error: gunicorn is not installed in venv. Run ./run_web.sh once." >&2
   exit 1
 fi
 
