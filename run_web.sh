@@ -13,12 +13,22 @@ if [ -f .env ]; then
 fi
 
 VENV_DIR="${VENV_DIR:-$SCRIPT_DIR/.venv}"
-if [ ! -x "$VENV_DIR/bin/python" ]; then
+if [ ! -x "$VENV_DIR/bin/python" ] && [ ! -x "$VENV_DIR/bin/python3" ]; then
+  if [ -d "$VENV_DIR" ]; then
+    echo "Removing incomplete venv at $VENV_DIR (missing bin/python)"
+    rm -rf "$VENV_DIR"
+  fi
   echo "No venv at $VENV_DIR. Create one with: ./run.sh (then run this again)."
   exit 1
 fi
 PY="$VENV_DIR/bin/python"
-PIP="$VENV_DIR/bin/pip"
+if [ ! -x "$PY" ]; then
+  PY="$VENV_DIR/bin/python3"
+fi
+if [ ! -x "$PY" ]; then
+  echo "ERROR: venv has no usable Python under $VENV_DIR/bin/. Run ./run.sh" >&2
+  exit 1
+fi
 
 # Port from config.yaml (web.port) or env (default 5503)
 if [ -f config.yaml ] && "$PY" -c "import yaml" 2>/dev/null; then
@@ -37,7 +47,7 @@ else
 fi
 
 echo "Installing web dependencies..."
-"$PIP" install -q -r requirements-web.txt
+"$PY" -m pip install -q -r requirements-web.txt
 
 echo "Starting Float Plan web app on port $PORT..."
 echo "Listen address: web.host in config.yaml and/or HOST in .env (see config.example.yaml)."

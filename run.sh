@@ -4,8 +4,8 @@ set -e
 cd "$(dirname "$0")"
 
 # --- Begin ensure_env logic (inlined from ensure_env.sh) ---
-# Recreate the venv if it's missing or broken (no Python binary).
-if [[ ! -x .venv/bin/python ]]; then
+# Recreate the venv if it's missing or broken (no usable Python binary).
+if [[ ! -x .venv/bin/python ]] && [[ ! -x .venv/bin/python3 ]]; then
   if [[ -d .venv ]]; then
     echo ".venv exists but has no Python binary; recreating..."
     rm -rf .venv
@@ -46,15 +46,15 @@ echo "Upgrading pip..."
 .venv/bin/python -m pip install --upgrade pip
 
 echo "Installing dependencies from requirements.txt..."
-.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 
 echo "Running pip audit..."
-if .venv/bin/pip audit 2>/dev/null; then
+if .venv/bin/python -m pip_audit 2>/dev/null; then
   : # audit ran (exit 0 or reported issues)
 else
   echo "Running pip check (dependency consistency)..."
   # Allow exit 1 so "X is not supported on this platform" (e.g. cffi wheel tags) doesn't block running the app
-  .venv/bin/pip check || true
+  .venv/bin/python -m pip check || true
 fi
 
 echo ""
