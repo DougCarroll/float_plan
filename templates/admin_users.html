@@ -3,7 +3,11 @@
 {% block content %}
 <div class="page-admin">
   <h1>Manage users</h1>
+  {% if oidc_enabled %}
+  <p class="sub">Accounts and roles are managed in <a href="{{ authentik_admin_url }}" target="_blank" rel="noopener">Authentik</a>. This list shows users who have signed in to Float Plan.</p>
+  {% else %}
   <p class="sub">Admin only. Create users and set role: <strong>admin</strong> (manage users), <strong>crew</strong> (edit data & generate PDFs), <strong>viewer</strong> (view only).</p>
+  {% endif %}
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
       {% for category, message in messages %}
@@ -12,6 +16,7 @@
     {% endif %}
   {% endwith %}
 
+  {% if not oidc_enabled %}
   <section class="admin-section">
     <h2>Create user</h2>
     <form method="post" action="{{ url_for('admin_users') }}" class="admin-form">
@@ -29,6 +34,7 @@
       <button type="submit">Create</button>
     </form>
   </section>
+  {% endif %}
 
   <section class="admin-section">
     <h2>Users</h2>
@@ -37,7 +43,7 @@
         <tr>
           <th>Username</th>
           <th>Role</th>
-          <th>Actions</th>
+          {% if not oidc_enabled %}<th>Actions</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -45,6 +51,9 @@
         <tr>
           <td>{{ u.username }}</td>
           <td>
+            {% if oidc_enabled %}
+            {{ u.group }}
+            {% else %}
             <form method="post" action="{{ url_for('admin_users') }}" style="display:inline;">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="action" value="set_group">
@@ -55,7 +64,9 @@
                 <option value="admin" {% if u.group == 'admin' %}selected{% endif %}>Admin</option>
               </select>
             </form>
+            {% endif %}
           </td>
+          {% if not oidc_enabled %}
           <td>
             {% if u.id != current_user.id %}
             <form method="post" action="{{ url_for('admin_users') }}" style="display:inline;" class="form-delete-user" data-username="{{ u.username | e }}">
@@ -68,12 +79,14 @@
             <span class="muted">(you)</span>
             {% endif %}
           </td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </section>
 </div>
+{% if not oidc_enabled %}
 <script>
   document.querySelectorAll('.form-delete-user').forEach(function(form) {
     form.addEventListener('submit', function(e) {
@@ -82,5 +95,5 @@
     });
   });
 </script>
+{% endif %}
 {% endblock %}
-

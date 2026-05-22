@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Pending approval — Float Plan{% endblock %}
+{% block content %}
+<div class="page-admin">
+  <h1>Account pending approval</h1>
+  <p class="sub">Your Authentik account exists but is not in an approved group yet.</p>
+  <p>An administrator must add you to <strong>boat-crew</strong>, <strong>boat-viewers</strong>, or <strong>boat-admins</strong> in Authentik before you can save vessels and crew data.</p>
+  <p class="small muted">The float plan form on the home page remains available without login.</p>
+  {% if enrollment_url %}
+  <p class="small"><a href="{{ enrollment_url }}" target="_blank" rel="noopener">Back to Authentik</a></p>
+  {% endif %}
+  <p><a href="{{ url_for('index') }}">Back to Float Plan</a></p>
+</div>
+{% endblock %}

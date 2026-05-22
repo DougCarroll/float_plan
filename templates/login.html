@@ -16,6 +16,24 @@
         {% endfor %}
       {% endif %}
     {% endwith %}
+
+    {% if oidc_enabled %}
+    <p><a class="btn" href="{{ url_for('oidc_login_start') }}">Sign in with Authentik</a></p>
+    {% if enrollment_url %}
+    <p class="small muted">Need an account? <a href="{{ enrollment_url }}" target="_blank" rel="noopener">Request one in Authentik</a> (admin assigns your role).</p>
+    {% endif %}
+    {% if break_glass_enabled %}
+    <h2>Emergency local login</h2>
+    <form method="post" action="{{ url_for('login') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="username">Username</label>
+      <input type="text" name="username" id="username" required autocomplete="username">
+      <label for="password">Password</label>
+      <input type="password" name="password" id="password" required autocomplete="current-password">
+      <button type="submit">Sign in (break-glass)</button>
+    </form>
+    {% endif %}
+    {% else %}
     <form method="post" action="{{ url_for('login') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label for="username">Username</label>
@@ -24,8 +42,8 @@
       <input type="password" name="password" id="password" required autocomplete="current-password">
       <button type="submit">Log in</button>
     </form>
+    {% endif %}
     <p class="back"><a href="{{ url_for('index') }}">← Back to Float Plan</a></p>
   </div>
 </body>
 </html>
-

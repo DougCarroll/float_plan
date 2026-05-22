@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import os
+import sqlite3
 import sys
 import tempfile
 from datetime import datetime
@@ -15,7 +16,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-from flask import Flask, jsonify, redirect, render_template, request, send_file, url_for, flash
+from flask import Flask, jsonify, redirect, render_template, request, send_file, session, url_for, flash
 from werkzeug.exceptions import RequestEntityTooLarge
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -428,12 +429,13 @@ def _save_user_crew_members(username: str, members: list[dict]) -> None:
 
 
 class User(UserMixin, db.Model):
-    """Users: admin (manage everything), crew (can save/select data), viewer (view-only, not used yet)."""
+    """Users: admin, crew (edit data), viewer (view-only), pending (awaiting Authentik approval)."""
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(128), nullable=False)
-    group = db.Column(db.String(16), nullable=False, default="viewer")  # admin, crew, viewer
+    authentik_sub = db.Column(db.String(128), unique=True, nullable=True)
+    group = db.Column(db.String(16), nullable=False, default="viewer")  # admin, crew, viewer, pending
 
     def set_password(self, password: str) -> None:
         self.password_hash = pbkdf2_sha256.hash(password)
@@ -500,6 +502,10 @@ def crew_required(fn):
 
     @wraps(fn)
     def wrapper(*args, **kwargs):
+        if current_user.is_authenticated and current_user.group == "pending":
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Account pending approval"}), 403
+            return redirect(url_for("pending_approval"))
         if not current_user.is_authenticated or not current_user.can_edit_data():
             # For API callers, return JSON error; for browser, redirect to login.
             if request.path.startswith("/api/"):
@@ -528,8 +534,40 @@ def admin_required(fn):
     return wrapper
 
 
+def _ensure_user_columns() -> None:
+    try:
+        conn = sqlite3.connect(db_path)
+    except sqlite3.Error as exc:
+        logger.warning("Could not open DB for migration: %s", exc)
+        return
+    try:
+        cur = conn.execute("PRAGMA table_info(user)")
+        cols = {str(row[1]) for row in cur.fetchall()}
+        if "authentik_sub" not in cols:
+            conn.execute("ALTER TABLE user ADD COLUMN authentik_sub VARCHAR(128)")
+            conn.commit()
+            logger.info("Added user.authentik_sub column")
+    except sqlite3.Error as exc:
+        logger.warning("User table migration failed: %s", exc)
+    finally:
+        conn.close()
+
+
+from oidc_auth import (
+    authentik_admin_url,
+    break_glass_login,
+    init_oidc,
+    load_oidc_settings,
+    oidc_logout_redirect,
+    register_oidc_routes,
+)
+
+OIDC = load_oidc_settings()
+LIMIT_LOGIN = "5 per minute"
+
 with app.app_context():
     db.create_all()
+    _ensure_user_columns()
     # Default user: "fp" (admin). Existing vessel/crew data is treated as belonging to this account.
     fp = User.query.filter_by(username="fp").first()
     if not fp:
@@ -592,27 +630,66 @@ def index():
 
 
 @app.route("/login", methods=["GET", "POST"])
-@limiter.limit("5 per minute")
+@limiter.limit(LIMIT_LOGIN)
 def login():
+    if current_user.is_authenticated:
+        if current_user.group == "pending":
+            return redirect(url_for("pending_approval"))
+        next_url = (request.args.get("next") or "").strip()
+        if next_url and next_url.startswith("/") and "//" not in next_url:
+            return redirect(next_url)
+        return redirect(url_for("index"))
+
+    if OIDC.enabled and request.method == "GET" and not request.args.get("local"):
+        nxt = request.args.get("next")
+        if nxt and nxt.startswith("/") and not nxt.startswith("//"):
+            session["oidc_next"] = nxt
+        return redirect(url_for("oidc_login_start"))
+
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
-        user = User.query.filter_by(username=username).first()
-        if user and user.check_password(password):
+        user = None
+        if OIDC.enabled:
+            user = break_glass_login(OIDC, username, password)
+        if user is None:
+            user = User.query.filter_by(username=username).first()
+            if user and not user.check_password(password):
+                user = None
+        if user and user.group == "pending":
+            flash("Your account is waiting for admin approval in Authentik.", "info")
+            return redirect(url_for("pending_approval"))
+        if user:
             login_user(user)
             next_url = (request.args.get("next") or "").strip()
-            # Only allow relative path, no protocol-relative (//), no CR/LF (header injection)
             if next_url and next_url.startswith("/") and "//" not in next_url and "\n" not in next_url and "\r" not in next_url:
                 return redirect(next_url)
             return redirect(url_for("index"))
         flash("Invalid username or password", "error")
-    return render_template("login.html")
+    return render_template(
+        "login.html",
+        oidc_enabled=OIDC.enabled,
+        break_glass_enabled=OIDC.break_glass_enabled,
+        enrollment_url=OIDC.enrollment_url,
+    )
+
+
+@app.route("/pending")
+def pending_approval():
+    return render_template(
+        "pending_approval.html",
+        enrollment_url=OIDC.enrollment_url if OIDC.enabled else "",
+    )
 
 
 @app.route("/logout")
 @login_required
 def logout():
     logout_user()
+    post = url_for("index", _external=True)
+    end = oidc_logout_redirect(OIDC, post)
+    if end:
+        return redirect(end)
     return redirect(url_for("login"))
 
 
@@ -620,6 +697,9 @@ def logout():
 @login_required
 @admin_required
 def admin_users():
+    if OIDC.enabled and request.method == "POST":
+        flash("User accounts are managed in Authentik when OIDC is enabled.", "info")
+        return redirect(url_for("admin_users"))
     if request.method == "POST":
         action = request.form.get("action")
         if action == "create":
@@ -687,7 +767,12 @@ def admin_users():
             return redirect(url_for("admin_users"))
         return redirect(url_for("admin_users"))
     users = User.query.order_by(User.username).all()
-    return render_template("admin_users.html", users=users)
+    return render_template(
+        "admin_users.html",
+        users=users,
+        oidc_enabled=OIDC.enabled,
+        authentik_admin_url=authentik_admin_url(OIDC),
+    )
 
 
 def _vessel_form_options():
@@ -1052,6 +1137,10 @@ def _flask_dev_bind_host_port() -> tuple[str, int]:
     host = os.environ.get("HOST", host)
     port = os.environ.get("PORT", port)
     return host, int(port)
+
+
+init_oidc(app, OIDC)
+register_oidc_routes(app, settings=OIDC, limit_login=LIMIT_LOGIN, limiter=limiter)
 
 
 def main():

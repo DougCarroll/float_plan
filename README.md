@@ -69,6 +69,14 @@ This installs web dependencies (Flask, gunicorn, PyYAML) into the same `.venv`, 
 
 This installs a Launch Agent at `~/Library/LaunchAgents/com.svburnttoast.floatplan.plist` with label **`com.svburnttoast.floatplan`** (legacy `com.floatplan` is removed on install). Logs go to `data/service.log` and `data/service.error.log`. To restart: `launchctl kickstart -k "gui/$(id -u)/com.svburnttoast.floatplan"`. To stop: `launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.svburnttoast.floatplan.plist`. To check: `launchctl list | grep svburnttoast.floatplan`.
 
+### Authentik SSO (OIDC)
+
+When **`OIDC_ENABLED=1`** in **`float_plan/.env`**, crew/admin login uses Authentik. Copy the **`float-plan`** block from **`../auth/config/clients.yaml`** after **`./install.sh`** in the auth repo. Set **`TRUST_PROXY=1`** behind Cloudflare. The float plan form on **`/`** stays public without login; saving vessel/crew data requires crew or admin.
+
+Roles: **`boat-admins`** → admin, **`boat-crew`** → crew, **`boat-viewers`** → viewer, **`boat-pending`** → pending.
+
+**Emergency local login (break-glass):** if Authentik is down, set **`BREAK_GLASS_ENABLED=1`**, **`BREAK_GLASS_USERNAME`**, and **`BREAK_GLASS_PASSWORD`** in **`.env`**, restart the service, then use **Emergency local login** at **`/login`**. Disable break-glass when SSO is restored. See **`.env.example`**.
+
 ## Git / GitHub — don’t push secrets
 
 The repo’s `.gitignore` is set up so these are **not** committed:
