@@ -527,3 +527,47 @@ body {
 .modal-form-content .section .field {
   margin-bottom: 0.5rem;
 }
+
+/* Responsive: phone, tablet portrait/landscape, desktop */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 768px) {
+  .nav {
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+    align-items: flex-start;
+  }
+  .nav-user {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .main { padding: 1rem 0.85rem; }
+  .leg-row-datetime { grid-template-columns: 1fr; }
+  .manage-row { flex-direction: column; align-items: stretch; }
+  .inline-add-row { flex-wrap: wrap; }
+  .actions { flex-direction: column; align-items: stretch; }
+  .actions .btn { width: 100%; text-align: center; }
+}
+
+@media (max-width: 480px) {
+  .main { padding: 0.75rem 0.65rem; }
+  .section { padding: 0.85rem 1rem; }
+  .modal-content { padding: 1rem 1.1rem; }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .nav a, .btn, .btn-delete, .btn-small, .checkbox-label {
+    min-height: 44px;
+  }
+  .btn, .btn-small, .btn-delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+}
