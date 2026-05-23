@@ -90,9 +90,18 @@ def load_oidc_settings(config: dict[str, Any] | None = None) -> OidcSettings:
     )
 
 
+def _oidc_metadata_url(issuer: str) -> str:
+    """Prefer local Authentik for discovery when the boat runs with public issuer URLs."""
+    issuer_path = urlparse(issuer).path.rstrip("/")
+    internal = str(os.environ.get("AUTHENTIK_INTERNAL_URL") or "").strip().rstrip("/")
+    if internal and issuer_path:
+        return f"{internal}{issuer_path}/.well-known/openid-configuration"
+    return f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+
+
 def _oidc_server_metadata(issuer: str) -> dict[str, Any]:
-    """Load Authentik metadata and rewrite endpoints to match OIDC_ISSUER (offline mode)."""
-    metadata_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+    """Load Authentik metadata and rewrite endpoints to match OIDC_ISSUER."""
+    metadata_url = _oidc_metadata_url(issuer)
     try:
         with urlopen(metadata_url, timeout=15) as resp:
             meta = json.load(resp)
@@ -100,21 +109,27 @@ def _oidc_server_metadata(issuer: str) -> dict[str, Any]:
         raise RuntimeError(f"Failed to load OIDC metadata from {metadata_url}") from exc
 
     parsed = urlparse(issuer)
-    base = f"{parsed.scheme}://{parsed.netloc}"
+    public_base = f"{parsed.scheme}://{parsed.netloc}"
+    internal = str(os.environ.get("AUTHENTIK_INTERNAL_URL") or "").strip().rstrip("/")
 
-    def _fix(url: str) -> str:
+    def _to_public(url: str) -> str:
         part = urlparse(url)
         if not part.path:
             return url
-        fixed = f"{base}{part.path}"
+        fixed = f"{public_base}{part.path}"
         if part.query:
             fixed = f"{fixed}?{part.query}"
         return fixed
 
-    for key, val in list(meta.items()):
-        if isinstance(val, str) and val.startswith(("http://", "https://")):
-            meta[key] = _fix(val)
     meta["issuer"] = issuer if issuer.endswith("/") else f"{issuer}/"
+    if internal:
+        # Online on the boat: browser authorize URL is public; token/userinfo stay local.
+        if isinstance(meta.get("authorization_endpoint"), str):
+            meta["authorization_endpoint"] = _to_public(meta["authorization_endpoint"])
+    else:
+        for key, val in list(meta.items()):
+            if isinstance(val, str) and val.startswith(("http://", "https://")):
+                meta[key] = _to_public(val)
     return meta
 
 
