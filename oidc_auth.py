@@ -1,13 +1,16 @@
 """Authentik OIDC login for Float Plan."""
 from __future__ import annotations
 
+import json
 import os
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 from urllib.parse import urlencode, urlparse
+from urllib.request import urlopen
 
 from authlib.integrations.flask_client import OAuth
 from flask import Flask, current_app, flash, redirect, request, session, url_for
@@ -87,6 +90,34 @@ def load_oidc_settings(config: dict[str, Any] | None = None) -> OidcSettings:
     )
 
 
+def _oidc_server_metadata(issuer: str) -> dict[str, Any]:
+    """Load Authentik metadata and rewrite endpoints to match OIDC_ISSUER (offline mode)."""
+    metadata_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+    try:
+        with urlopen(metadata_url, timeout=15) as resp:
+            meta = json.load(resp)
+    except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Failed to load OIDC metadata from {metadata_url}") from exc
+
+    parsed = urlparse(issuer)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+
+    def _fix(url: str) -> str:
+        part = urlparse(url)
+        if not part.path:
+            return url
+        fixed = f"{base}{part.path}"
+        if part.query:
+            fixed = f"{fixed}?{part.query}"
+        return fixed
+
+    for key, val in list(meta.items()):
+        if isinstance(val, str) and val.startswith(("http://", "https://")):
+            meta[key] = _fix(val)
+    meta["issuer"] = issuer if issuer.endswith("/") else f"{issuer}/"
+    return meta
+
+
 def init_oidc(app: Flask, settings: OidcSettings) -> None:
     if not settings.enabled:
         return
@@ -96,12 +127,15 @@ def init_oidc(app: Flask, settings: OidcSettings) -> None:
             "and OIDC_REDIRECT_URI (or web.base_url / web.public_base_url in config.yaml)."
         )
     oauth.init_app(app)
-    metadata_url = f"{settings.issuer}.well-known/openid-configuration"
+    meta = _oidc_server_metadata(settings.issuer)
     oauth.register(
         name="authentik",
         client_id=settings.client_id,
         client_secret=settings.client_secret,
-        server_metadata_url=metadata_url,
+        authorize_url=meta["authorization_endpoint"],
+        access_token_url=meta["token_endpoint"],
+        userinfo_endpoint=meta.get("userinfo_endpoint"),
+        jwks_uri=meta.get("jwks_uri"),
         client_kwargs={"scope": "openid profile email"},
     )
 
@@ -195,7 +229,6 @@ def register_oidc_routes(
         return
 
     @app.route("/oidc/login")
-    @limiter.limit(limit_login)
     def oidc_login_start() -> Response:
         if current_user.is_authenticated:
             group = getattr(current_user, "group", None)
@@ -208,7 +241,6 @@ def register_oidc_routes(
         return oauth.authentik.authorize_redirect(settings.redirect_uri)
 
     @app.route("/oidc/callback")
-    @limiter.limit(limit_login)
     def oidc_callback() -> Response:
         try:
             token = oauth.authentik.authorize_access_token()

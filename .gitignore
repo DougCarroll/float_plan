@@ -25,6 +25,8 @@ ENV/
 .env
 .env.*
 !.env.example
+!.env.online
+!.env.offline
 .env.local
 *.pem
 secrets/

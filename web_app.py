@@ -277,9 +277,14 @@ app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024  # 4 MB
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 if (
-    _env_truthy("PREFER_HTTPS")
-    or _is_production_deployment()
-    or _env_truthy("SESSION_COOKIE_SECURE")
+    _env_truthy("SESSION_COOKIE_SECURE")
+    or (
+        _env_truthy("TRUST_PROXY")
+        and (
+            _env_truthy("PREFER_HTTPS")
+            or _is_production_deployment()
+        )
+    )
 ):
     app.config["SESSION_COOKIE_SECURE"] = True
 
@@ -631,7 +636,7 @@ def index():
 
 
 @app.route("/login", methods=["GET", "POST"])
-@limiter.limit(LIMIT_LOGIN)
+@limiter.limit(LIMIT_LOGIN, methods=["POST"])
 def login():
     if current_user.is_authenticated:
         if current_user.group == "pending":

@@ -4,7 +4,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-if [ -f .env ]; then
+AUTH_DIR="${FLEET_AUTH_DIR:-$(cd "$SCRIPT_DIR/../auth" 2>/dev/null && pwd)}"
+if [ -f "${AUTH_DIR}/scripts/fleet-env.sh" ]; then
+  # shellcheck disable=SC1091
+  source "${AUTH_DIR}/scripts/fleet-env.sh"
+  load_fleet_env "$SCRIPT_DIR"
+elif [ -f .env ]; then
   set -a
   # shellcheck disable=SC1091
   source .env
