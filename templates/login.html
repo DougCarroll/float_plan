@@ -22,6 +22,9 @@
     {% if enrollment_url %}
     <p class="small muted">Need an account? <a href="{{ enrollment_url }}" target="_blank" rel="noopener">Request one in Authentik</a> (admin assigns your role).</p>
     {% endif %}
+    {% if authentik_user_url %}
+    <p class="small muted"><a href="{{ authentik_user_url }}" target="_blank" rel="noopener">Change password in Authentik</a></p>
+    {% endif %}
     {% if break_glass_enabled %}
     <h2>Emergency local login</h2>
     <form method="post" action="{{ url_for('login') }}">

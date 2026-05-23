@@ -555,6 +555,7 @@ def _ensure_user_columns() -> None:
 
 from oidc_auth import (
     authentik_admin_url,
+    authentik_user_url,
     break_glass_login,
     init_oidc,
     load_oidc_settings,
@@ -1137,6 +1138,14 @@ def _flask_dev_bind_host_port() -> tuple[str, int]:
     host = os.environ.get("HOST", host)
     port = os.environ.get("PORT", port)
     return host, int(port)
+
+
+@app.context_processor
+def inject_oidc_globals():
+    return {
+        "oidc_enabled": OIDC.enabled,
+        "authentik_user_url": authentik_user_url(OIDC) if OIDC.enabled else "",
+    }
 
 
 init_oidc(app, OIDC)

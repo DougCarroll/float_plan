@@ -272,3 +272,21 @@ def authentik_admin_url(settings: OidcSettings) -> str:
         return ""
     parsed = urlparse(settings.issuer)
     return f"{parsed.scheme}://{parsed.netloc}/if/admin/"
+
+
+def authentik_user_url(settings: OidcSettings) -> str:
+    """End-user portal (profile, password, MFA). Override with OIDC_USER_SETTINGS_URL if needed."""
+    custom = str(os.environ.get("OIDC_USER_SETTINGS_URL") or "").strip()
+    if custom:
+        return custom
+    if not settings.issuer:
+        return ""
+    parsed = urlparse(settings.issuer)
+    return f"{parsed.scheme}://{parsed.netloc}/if/user/"
+
+
+def user_manages_local_credentials(settings: OidcSettings, user) -> bool:
+    """True when password/email are managed in the app (local or break-glass), not Authentik."""
+    if not settings.enabled:
+        return True
+    return not getattr(user, "authentik_sub", None)
