@@ -110,7 +110,6 @@ def _oidc_server_metadata(issuer: str) -> dict[str, Any]:
 
     parsed = urlparse(issuer)
     public_base = f"{parsed.scheme}://{parsed.netloc}"
-    internal = str(os.environ.get("AUTHENTIK_INTERNAL_URL") or "").strip().rstrip("/")
 
     def _to_public(url: str) -> str:
         part = urlparse(url)
@@ -122,15 +121,15 @@ def _oidc_server_metadata(issuer: str) -> dict[str, Any]:
         return fixed
 
     meta["issuer"] = issuer if issuer.endswith("/") else f"{issuer}/"
-    if internal:
-        # Online on the boat: browser authorize URL is public; token/userinfo stay local.
-        if isinstance(meta.get("authorization_endpoint"), str):
-            meta["authorization_endpoint"] = _to_public(meta["authorization_endpoint"])
-    else:
-        for key, val in list(meta.items()):
-            if isinstance(val, str) and val.startswith(("http://", "https://")):
-                meta[key] = _to_public(val)
+    for key, val in list(meta.items()):
+        if isinstance(val, str) and val.startswith(("http://", "https://")):
+            meta[key] = _to_public(val)
     return meta
+
+
+def _login_after_oidc_failure() -> Response:
+    """Break /login → /oidc/login loops when the OAuth callback fails."""
+    return redirect(url_for("login", local=1))
 
 
 def init_oidc(app: Flask, settings: OidcSettings) -> None:
@@ -261,7 +260,7 @@ def register_oidc_routes(
             token = oauth.authentik.authorize_access_token()
         except Exception:
             flash("Sign-in with Authentik failed.", "error")
-            return redirect(url_for("login"))
+            return _login_after_oidc_failure()
         claims = token.get("userinfo") if isinstance(token, dict) else None
         if not isinstance(claims, dict):
             try:
@@ -270,7 +269,7 @@ def register_oidc_routes(
                 claims = {}
         if not isinstance(claims, dict):
             flash("Authentik did not return user information.", "error")
-            return redirect(url_for("login"))
+            return _login_after_oidc_failure()
 
         user = upsert_user_from_oidc(settings, claims)
         if user.group == "pending":
