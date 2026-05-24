@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
-from urllib.error import URLError
 from urllib.parse import urlencode, urlparse
-from urllib.request import urlopen
+
+import requests
 
 from authlib.integrations.flask_client import OAuth
 from flask import Flask, current_app, flash, redirect, request, session, url_for
@@ -99,14 +99,25 @@ def _oidc_metadata_url(issuer: str) -> str:
     return f"{issuer.rstrip('/')}/.well-known/openid-configuration"
 
 
+def _load_oidc_metadata_json(metadata_url: str) -> dict[str, Any]:
+    parsed = urlparse(metadata_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError(f"Invalid OIDC metadata URL: {metadata_url}")
+    try:
+        resp = requests.get(metadata_url, timeout=15)
+        resp.raise_for_status()
+        meta = resp.json()
+    except (requests.RequestException, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Failed to load OIDC metadata from {metadata_url}") from exc
+    if not isinstance(meta, dict):
+        raise RuntimeError(f"OIDC metadata from {metadata_url} is not a JSON object")
+    return meta
+
+
 def _oidc_server_metadata(issuer: str) -> dict[str, Any]:
     """Load Authentik metadata and rewrite endpoints to match OIDC_ISSUER."""
     metadata_url = _oidc_metadata_url(issuer)
-    try:
-        with urlopen(metadata_url, timeout=15) as resp:
-            meta = json.load(resp)
-    except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Failed to load OIDC metadata from {metadata_url}") from exc
+    meta = _load_oidc_metadata_json(metadata_url)
 
     parsed = urlparse(issuer)
     public_base = f"{parsed.scheme}://{parsed.netloc}"
