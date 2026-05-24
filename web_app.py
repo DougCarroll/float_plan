@@ -357,21 +357,7 @@ app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(app)
 
-
-USER_DATA_ROOT = APP_DIR / "data" / "users"
-
-
-def _user_data_paths(username: str) -> tuple[Path, Path]:
-    """Return (vessels_file, crew_members_file) for this user under data/users/<username>/.
-    Resolves paths and ensures they stay under USER_DATA_ROOT to prevent path traversal.
-    """
-    root = USER_DATA_ROOT.resolve()
-    base = (root / username).resolve()
-    try:
-        base.relative_to(root)
-    except ValueError:
-        base = root / "_invalid"
-    return base / "vessels.json", base / "crew_members.json"
+LEGACY_USER_DATA_ROOT = APP_DIR / "data" / "users"
 
 
 def _username_safe(username: str) -> bool:
@@ -383,54 +369,62 @@ def _username_safe(username: str) -> bool:
     return True
 
 
-def _load_user_vessels(username: str) -> list[dict]:
-    """Per-user vessels. For fp, migrate existing shared vessels.json on first use."""
-    vessels_file, _ = _user_data_paths(username)
-    if username == "fp" and not vessels_file.exists():
-        shared = load_vessels()
-        if shared:
-            vessels_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(vessels_file, "w", encoding="utf-8") as f:
-                json.dump(shared, f, indent=2)
-    if not vessels_file.exists():
-        return []
-    try:
-        with open(vessels_file, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
+def _load_vessels() -> list[dict]:
+    """Instance-wide vessel list (shared by all authorized users on this deployment)."""
+    return load_vessels()
 
 
-def _save_user_vessels(username: str, vessels: list[dict]) -> None:
-    vessels_file, _ = _user_data_paths(username)
-    vessels_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(vessels_file, "w", encoding="utf-8") as f:
-        json.dump(vessels, f, indent=2)
+def _save_vessels(vessels: list[dict]) -> None:
+    save_vessels(vessels)
 
 
-def _load_user_crew_members(username: str) -> list[dict]:
-    """Per-user crew members. For fp, migrate existing shared crew_members.json on first use."""
-    _, crew_file = _user_data_paths(username)
-    if username == "fp" and not crew_file.exists():
-        shared = load_crew_members()
-        if shared:
-            crew_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(crew_file, "w", encoding="utf-8") as f:
-                json.dump(shared, f, indent=2)
-    if not crew_file.exists():
-        return []
-    try:
-        with open(crew_file, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
+def _load_crew_members() -> list[dict]:
+    """Instance-wide crew member pool (shared by all authorized users on this deployment)."""
+    return load_crew_members()
 
 
-def _save_user_crew_members(username: str, members: list[dict]) -> None:
-    _, crew_file = _user_data_paths(username)
-    crew_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(crew_file, "w", encoding="utf-8") as f:
-        json.dump(members, f, indent=2)
+def _save_crew_members(members: list[dict]) -> None:
+    save_crew_members(members)
+
+
+def _ensure_instance_data_migrated() -> None:
+    """One-time: copy legacy data/users/* JSON into shared data/*.json if needed."""
+    if _load_vessels() or _load_crew_members():
+        return
+    if not LEGACY_USER_DATA_ROOT.is_dir():
+        return
+    sources: list[Path] = []
+    fp_dir = LEGACY_USER_DATA_ROOT / "fp"
+    if fp_dir.is_dir() and (
+        (fp_dir / "vessels.json").is_file() or (fp_dir / "crew_members.json").is_file()
+    ):
+        sources.append(fp_dir)
+    for entry in sorted(LEGACY_USER_DATA_ROOT.iterdir()):
+        if not entry.is_dir() or entry in sources:
+            continue
+        if (entry / "vessels.json").is_file() or (entry / "crew_members.json").is_file():
+            sources.append(entry)
+    if not sources:
+        return
+    src = sources[0]
+    vessels_path = src / "vessels.json"
+    crew_path = src / "crew_members.json"
+    if vessels_path.is_file():
+        try:
+            vessels = json.loads(vessels_path.read_text(encoding="utf-8"))
+            if isinstance(vessels, list) and vessels:
+                _save_vessels(vessels)
+                logger.info("Migrated legacy vessels from %s", src.name)
+        except Exception as exc:
+            logger.warning("Could not migrate legacy vessels from %s: %s", src, exc)
+    if crew_path.is_file():
+        try:
+            members = json.loads(crew_path.read_text(encoding="utf-8"))
+            if isinstance(members, list) and members:
+                _save_crew_members(members)
+                logger.info("Migrated legacy crew members from %s", src.name)
+        except Exception as exc:
+            logger.warning("Could not migrate legacy crew members from %s: %s", src, exc)
 
 
 class User(UserMixin, db.Model):
@@ -574,7 +568,8 @@ LIMIT_LOGIN = "5 per minute"
 with app.app_context():
     db.create_all()
     _ensure_user_columns()
-    # Default user: "fp" (admin). Existing vessel/crew data is treated as belonging to this account.
+    _ensure_instance_data_migrated()
+    # Default local user "fp" (admin) for break-glass / legacy installs.
     fp = User.query.filter_by(username="fp").first()
     if not fp:
         default_password = os.environ.get("FP_DEFAULT_PASSWORD", "change-me-fp")
@@ -798,7 +793,7 @@ def _vessel_form_options():
 @login_required
 @crew_required
 def vessels_list():
-    vessels = _load_user_vessels(current_user.username)
+    vessels = _load_vessels()
     return render_template("vessels_list.html", vessels=vessels)
 
 
@@ -826,7 +821,7 @@ def vessel_new():
 @login_required
 @crew_required
 def vessel_edit(index):
-    vessels = _load_user_vessels(current_user.username)
+    vessels = _load_vessels()
     if index < 0 or index >= len(vessels):
         flash("Vessel not found.", "error")
         return redirect(url_for("vessels_list"))
@@ -846,7 +841,7 @@ def vessel_save():
         index = int(index_val)
     except ValueError:
         index = -1
-    vessels = _load_user_vessels(current_user.username)
+    vessels = _load_vessels()
     vessel = dict(DEFAULT_VESSEL)
     for k in DEFAULT_VESSEL:
         if k in ("id", "name"):
@@ -864,7 +859,7 @@ def vessel_save():
     else:
         vessels.append(vessel)
         flash("Vessel added.", "success")
-    _save_user_vessels(current_user.username, vessels)
+    _save_vessels(vessels)
     return redirect(url_for("vessels_list"))
 
 
@@ -872,13 +867,13 @@ def vessel_save():
 @login_required
 @crew_required
 def vessel_delete(index: int):
-    vessels = _load_user_vessels(current_user.username)
+    vessels = _load_vessels()
     if index < 0 or index >= len(vessels):
         flash("Vessel not found.", "error")
         return redirect(url_for("vessels_list"))
     name = (vessels[index].get("name") or vessels[index].get("id_vessel_name") or "Unnamed").strip()
     vessels.pop(index)
-    _save_user_vessels(current_user.username, vessels)
+    _save_vessels(vessels)
     flash(f"Deleted vessel: {name}", "success")
     return redirect(url_for("vessels_list"))
 
@@ -887,7 +882,7 @@ def vessel_delete(index: int):
 @login_required
 @crew_required
 def crew_list():
-    members = _load_user_crew_members(current_user.username)
+    members = _load_crew_members()
     return render_template("crew_list.html", members=members)
 
 
@@ -904,7 +899,7 @@ def crew_new():
 @login_required
 @crew_required
 def crew_edit(index):
-    members = _load_user_crew_members(current_user.username)
+    members = _load_crew_members()
     if index < 0 or index >= len(members):
         flash("Crew member not found.", "error")
         return redirect(url_for("crew_list"))
@@ -922,7 +917,7 @@ def crew_save():
         index = int(index_val)
     except ValueError:
         index = -1
-    members = _load_user_crew_members(current_user.username)
+    members = _load_crew_members()
     person = dict(DEFAULT_PERSON)
     for k in DEFAULT_PERSON:
         if k == "pfd":
@@ -935,7 +930,7 @@ def crew_save():
     else:
         members.append(person)
         flash("Crew member added.", "success")
-    _save_user_crew_members(current_user.username, members)
+    _save_crew_members(members)
     return redirect(url_for("crew_list"))
 
 
@@ -943,32 +938,32 @@ def crew_save():
 @login_required
 @crew_required
 def crew_delete(index: int):
-    members = _load_user_crew_members(current_user.username)
+    members = _load_crew_members()
     if index < 0 or index >= len(members):
         flash("Crew member not found.", "error")
         return redirect(url_for("crew_list"))
     name = (members[index].get("name") or "Unnamed").strip()
     members.pop(index)
-    _save_user_crew_members(current_user.username, members)
+    _save_crew_members(members)
     flash(f"Deleted crew member: {name}", "success")
     return redirect(url_for("crew_list"))
 
 
 @app.route("/api/vessels")
 def api_vessels():
-    """Return user's vessels when logged in; empty list for anonymous (they use client-side state)."""
+    """Return instance vessels when logged in; empty list for anonymous (they use client-side state)."""
     if not current_user.is_authenticated:
         return jsonify([])
-    vessels = _load_user_vessels(current_user.username)
+    vessels = _load_vessels()
     return jsonify(vessels)
 
 
 @app.route("/api/crew_members")
 def api_crew_members():
-    """Return user's crew when logged in; empty list for anonymous."""
+    """Return instance crew when logged in; empty list for anonymous."""
     if not current_user.is_authenticated:
         return jsonify([])
-    members = _load_user_crew_members(current_user.username)
+    members = _load_crew_members()
     return jsonify(members)
 
 
@@ -1057,7 +1052,7 @@ def api_pdf():
 @app.route("/api/vessels", methods=["POST"])
 @crew_required
 def api_create_vessel():
-    """Create a minimal vessel record for the current user (name + optional identity fields)."""
+    """Create a minimal vessel record in the shared instance store."""
     try:
         data = request.get_json(force=True) or {}
     except Exception:
@@ -1065,7 +1060,7 @@ def api_create_vessel():
     name = (data.get("name") or "").strip()
     if not name:
         return jsonify({"error": "Name is required"}), 400
-    vessels = _load_user_vessels(current_user.username)
+    vessels = _load_vessels()
     vessel = dict(DEFAULT_VESSEL)
     vessel["id"] = ""
     vessel["id_vessel_name"] = name
@@ -1075,14 +1070,14 @@ def api_create_vessel():
         if k in data:
             vessel[k] = str(data.get(k) or "").strip()
     vessels.append(vessel)
-    _save_user_vessels(current_user.username, vessels)
+    _save_vessels(vessels)
     return jsonify(vessel), 201
 
 
 @app.route("/api/crew_members", methods=["POST"])
 @crew_required
 def api_create_crew_member():
-    """Create a minimal crew member (person) for the current user."""
+    """Create a minimal crew member (person) in the shared instance store."""
     try:
         data = request.get_json(force=True) or {}
     except Exception:
@@ -1090,7 +1085,7 @@ def api_create_crew_member():
     name = (data.get("name") or "").strip()
     if not name:
         return jsonify({"error": "Name is required"}), 400
-    members = _load_user_crew_members(current_user.username)
+    members = _load_crew_members()
     person = dict(DEFAULT_PERSON)
     person["name"] = name
     # Optional simple fields
@@ -1098,7 +1093,7 @@ def api_create_crew_member():
         if k in data:
             person[k] = str(data.get(k) or "").strip()
     members.append(person)
-    _save_user_crew_members(current_user.username, members)
+    _save_crew_members(members)
     return jsonify(person), 201
 
 
