@@ -560,6 +560,7 @@ from oidc_auth import (
     load_oidc_settings,
     oidc_logout_completion_response,
     oidc_post_logout_uri,
+    apply_logout_cookies,
     clear_app_session_after_logout,
     register_oidc_routes,
 )
@@ -693,7 +694,7 @@ def logout():
     logout_user()
     clear_app_session_after_logout()
     if not OIDC.enabled:
-        return redirect(url_for('login'))
+        return apply_logout_cookies(redirect(url_for('login', local=1)))
     return oidc_logout_completion_response(OIDC, post, id_token_hint=id_token_hint)
 
 

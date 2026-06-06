@@ -236,7 +236,7 @@ def _safe_next_url() -> str | None:
     return None
 
 
-def _login_flask_user(user, *, remember: bool = True) -> None:
+def _login_flask_user(user, *, remember: bool = False) -> None:
     session.permanent = True
     current_app.permanent_session_lifetime = _session_lifetime_for_group(
         str(getattr(user, "group", "") or "crew")
@@ -297,7 +297,7 @@ def register_oidc_routes(
         return redirect(nxt or url_for("index"))
     @app.route("/oidc/logout/done")
     def oidc_logout_done() -> Response:
-        return redirect(url_for("login"))
+        return redirect(url_for("login", local=1))
 
 
 
@@ -427,7 +427,13 @@ def oidc_logout_completion_response(
 </html>"""
     from flask import make_response
 
-    return make_response(body)
+    return apply_logout_cookies(make_response(body))
+
+
+def apply_logout_cookies(response: Response) -> Response:
+    """Clear remember-me on the logout response (must run after logout_user())."""
+    current_app.login_manager._clear_cookie(response)
+    return response
 
 
 def clear_app_session_after_logout() -> None:
@@ -446,8 +452,8 @@ def _app_home_from_redirect(settings: OidcSettings) -> str:
 def _app_login_url(settings: OidcSettings) -> str:
     parsed = urlparse(settings.redirect_uri)
     if parsed.scheme and parsed.netloc:
-        return f"{parsed.scheme}://{parsed.netloc}/login"
-    return url_for("login", _external=True)
+        return f"{parsed.scheme}://{parsed.netloc}/login?local=1"
+    return url_for("login", local=1, _external=True)
 
 
 def oidc_post_logout_url(settings: OidcSettings) -> str:
