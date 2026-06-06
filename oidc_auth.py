@@ -297,7 +297,7 @@ def register_oidc_routes(
         return redirect(nxt or url_for("index"))
     @app.route("/oidc/logout/done")
     def oidc_logout_done() -> Response:
-        return redirect(url_for("index"))
+        return redirect(url_for("login"))
 
 
 
