@@ -559,6 +559,7 @@ from oidc_auth import (
     init_oidc,
     load_oidc_settings,
     oidc_logout_redirect,
+    oidc_post_logout_url,
     register_oidc_routes,
 )
 
@@ -686,12 +687,14 @@ def pending_approval():
 @app.route("/logout")
 @login_required
 def logout():
+    id_token_hint = session.get("oidc_id_token")
     logout_user()
-    post = url_for("index", _external=True)
-    end = oidc_logout_redirect(OIDC, post)
+    session.clear()
+    post = oidc_post_logout_url(OIDC)
+    end = oidc_logout_redirect(OIDC, post, id_token_hint=id_token_hint)
     if end:
         return redirect(end)
-    return redirect(url_for("login"))
+    return redirect(url_for("index"))
 
 
 @app.route("/admin/users", methods=["GET", "POST"])

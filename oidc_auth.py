@@ -1,6 +1,7 @@
 """Authentik OIDC login for Float Plan."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import secrets
@@ -291,6 +292,7 @@ def register_oidc_routes(
             return redirect(url_for("pending_approval"))
 
         _login_flask_user(user)
+        stash_oidc_id_token(token, settings)
         nxt = _safe_next_url()
         return redirect(nxt or url_for("index"))
 
@@ -316,12 +318,77 @@ def break_glass_login(settings: OidcSettings, username: str, password: str):
     return user
 
 
-def oidc_logout_redirect(settings: OidcSettings, post_logout_url: str) -> str | None:
+def _normalize_issuer(url: str) -> str:
+    return f"{str(url or '').strip().rstrip('/')}/"
+
+
+def _b64url_json(segment: str) -> dict[str, Any]:
+    padding = "=" * (-len(segment) % 4)
+    return json.loads(base64.urlsafe_b64decode(segment + padding))
+
+
+def id_token_hint_usable(id_token: str | None, settings: OidcSettings | None = None) -> bool:
+    token = str(id_token or "").strip()
+    if not token:
+        return False
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+    try:
+        header = _b64url_json(parts[0])
+        if header.get("enc"):
+            return False
+        if not settings:
+            return True
+        claims = _b64url_json(parts[1])
+        if settings.client_id:
+            aud = claims.get("aud")
+            if isinstance(aud, list):
+                if settings.client_id not in [str(a) for a in aud]:
+                    return False
+            elif str(aud or "") != settings.client_id:
+                return False
+        if settings.issuer:
+            iss = str(claims.get("iss") or "")
+            if iss and _normalize_issuer(iss) != _normalize_issuer(settings.issuer):
+                return False
+    except (ValueError, json.JSONDecodeError, TypeError):
+        return False
+    return True
+
+
+def stash_oidc_id_token(token: dict[str, Any] | None, settings: OidcSettings) -> None:
+    if not isinstance(token, dict):
+        return
+    id_token = token.get("id_token")
+    if id_token and id_token_hint_usable(str(id_token), settings):
+        session["oidc_id_token"] = str(id_token)
+
+
+def oidc_logout_redirect(
+    settings: OidcSettings,
+    post_logout_url: str,
+    *,
+    id_token_hint: str | None = None,
+) -> str | None:
     if not settings.enabled or not settings.issuer:
         return None
+    if not id_token_hint or not id_token_hint_usable(id_token_hint, settings):
+        return None
     end_session = f"{settings.issuer}end-session/"
-    query = urlencode({"post_logout_redirect_uri": post_logout_url})
-    return f"{end_session}?{query}"
+    params = {
+        "client_id": settings.client_id,
+        "id_token_hint": id_token_hint,
+        "post_logout_redirect_uri": post_logout_url,
+    }
+    return f"{end_session}?{urlencode(params)}"
+
+
+def oidc_post_logout_url(settings: OidcSettings) -> str:
+    parsed = urlparse(settings.redirect_uri)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}/"
+    return url_for("index", _external=True)
 
 
 def authentik_admin_url(settings: OidcSettings) -> str:
