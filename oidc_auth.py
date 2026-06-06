@@ -1,4 +1,4 @@
-"""Authentik OIDC login for Float Plan."""
+"""Authentik OIDC login for Boat Monitor."""
 from __future__ import annotations
 
 import base64
@@ -7,7 +7,6 @@ import os
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
@@ -18,12 +17,12 @@ from flask import Flask, current_app, flash, redirect, request, session, url_for
 from flask_login import current_user, login_user
 from werkzeug.wrappers import Response
 
+from models import User, db
+
 DEFAULT_GROUP_ADMINS = "boat-admins"
 DEFAULT_GROUP_CREW = "boat-crew"
 DEFAULT_GROUP_VIEWERS = "boat-viewers"
 DEFAULT_GROUP_PENDING = "boat-pending"
-
-oauth = OAuth()
 
 
 @dataclass(frozen=True)
@@ -43,27 +42,16 @@ class OidcSettings:
     break_glass_password: str
 
 
+oauth = OAuth()
+
+
 def _env_truthy(name: str) -> bool:
     return str(os.environ.get(name) or "").strip().lower() in ("1", "true", "yes", "on")
 
 
-def _load_yaml_config() -> dict[str, Any]:
-    config_path = Path(__file__).resolve().parent / "config.yaml"
-    if not config_path.is_file():
-        return {}
-    import yaml
-
-    with open(config_path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    return data if isinstance(data, dict) else {}
-
-
-def load_oidc_settings(config: dict[str, Any] | None = None) -> OidcSettings:
-    cfg = config if config is not None else _load_yaml_config()
-    web = cfg.get("web") or {}
-    public_base = str(
-        web.get("public_base_url") or web.get("base_url") or ""
-    ).strip().rstrip("/")
+def load_oidc_settings(config: dict[str, Any]) -> OidcSettings:
+    web = config.get("web") or {}
+    public_base = str(web.get("public_base_url") or "").strip().rstrip("/")
     redirect_uri = str(os.environ.get("OIDC_REDIRECT_URI") or "").strip()
     if not redirect_uri and public_base:
         redirect_uri = f"{public_base}/oidc/callback"
@@ -150,7 +138,7 @@ def init_oidc(app: Flask, settings: OidcSettings) -> None:
     if not all([settings.client_id, settings.client_secret, settings.issuer, settings.redirect_uri]):
         raise RuntimeError(
             "OIDC_ENABLED=1 requires OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_ISSUER, "
-            "and OIDC_REDIRECT_URI (or web.base_url / web.public_base_url in config.yaml)."
+            "and OIDC_REDIRECT_URI (or web.public_base_url in config.yaml)."
         )
     oauth.init_app(app)
     meta = _oidc_server_metadata(settings.issuer)
@@ -203,9 +191,7 @@ def _session_lifetime_for_group(group: str) -> timedelta:
     return timedelta(days=7)
 
 
-def upsert_user_from_oidc(settings: OidcSettings, claims: dict[str, Any]):
-    from web_app import User, db
-
+def upsert_user_from_oidc(settings: OidcSettings, claims: dict[str, Any]) -> User:
     sub = str(claims.get("sub") or "").strip()
     username = _username_from_claims(claims)
     groups = _groups_from_claims(claims)
@@ -236,7 +222,7 @@ def _safe_next_url() -> str | None:
     return None
 
 
-def _login_flask_user(user, *, remember: bool = True) -> None:
+def _login_flask_user(user: User, *, remember: bool = True) -> None:
     session.permanent = True
     current_app.permanent_session_lifetime = _session_lifetime_for_group(
         str(getattr(user, "group", "") or "crew")
@@ -296,10 +282,12 @@ def register_oidc_routes(
         nxt = _safe_next_url()
         return redirect(nxt or url_for("index"))
 
+    @app.route("/oidc/logout/done")
+    def oidc_logout_done() -> Response:
+        return redirect(url_for("index"))
 
-def break_glass_login(settings: OidcSettings, username: str, password: str):
-    from web_app import User, db
 
+def break_glass_login(settings: OidcSettings, username: str, password: str) -> User | None:
     if not settings.break_glass_enabled:
         return None
     if username != settings.break_glass_username:
@@ -318,16 +306,13 @@ def break_glass_login(settings: OidcSettings, username: str, password: str):
     return user
 
 
-def _normalize_issuer(url: str) -> str:
-    return f"{str(url or '').strip().rstrip('/')}/"
-
-
 def _b64url_json(segment: str) -> dict[str, Any]:
     padding = "=" * (-len(segment) % 4)
     return json.loads(base64.urlsafe_b64decode(segment + padding))
 
 
 def id_token_hint_usable(id_token: str | None, settings: OidcSettings | None = None) -> bool:
+    """Authentik end-session only accepts signed JWTs, not encrypted JWE (5 segments)."""
     token = str(id_token or "").strip()
     if not token:
         return False
@@ -338,20 +323,6 @@ def id_token_hint_usable(id_token: str | None, settings: OidcSettings | None = N
         header = _b64url_json(parts[0])
         if header.get("enc"):
             return False
-        if not settings:
-            return True
-        claims = _b64url_json(parts[1])
-        if settings.client_id:
-            aud = claims.get("aud")
-            if isinstance(aud, list):
-                if settings.client_id not in [str(a) for a in aud]:
-                    return False
-            elif str(aud or "") != settings.client_id:
-                return False
-        if settings.issuer:
-            iss = str(claims.get("iss") or "")
-            if iss and _normalize_issuer(iss) != _normalize_issuer(settings.issuer):
-                return False
     except (ValueError, json.JSONDecodeError, TypeError):
         return False
     return True
@@ -360,9 +331,27 @@ def id_token_hint_usable(id_token: str | None, settings: OidcSettings | None = N
 def stash_oidc_id_token(token: dict[str, Any] | None, settings: OidcSettings) -> None:
     if not isinstance(token, dict):
         return
-    id_token = token.get("id_token")
-    if id_token and id_token_hint_usable(str(id_token), settings):
-        session["oidc_id_token"] = str(id_token)
+    id_token = str(token.get("id_token") or "").strip()
+    if id_token and id_token_hint_usable(id_token, settings):
+        session["oidc_id_token"] = id_token
+        session.modified = True
+
+
+def oidc_logout_params(
+    settings: OidcSettings,
+    post_logout_url: str,
+    *,
+    id_token_hint: str | None = None,
+) -> dict[str, str] | None:
+    if not settings.enabled or not settings.issuer:
+        return None
+    params: dict[str, str] = {}
+    if settings.client_id:
+        params["client_id"] = settings.client_id
+    if id_token_hint and id_token_hint_usable(id_token_hint, settings):
+        params["id_token_hint"] = id_token_hint
+        params["post_logout_redirect_uri"] = post_logout_url
+    return params or None
 
 
 def oidc_logout_redirect(
@@ -371,24 +360,85 @@ def oidc_logout_redirect(
     *,
     id_token_hint: str | None = None,
 ) -> str | None:
-    if not settings.enabled or not settings.issuer:
+    params = oidc_logout_params(settings, post_logout_url, id_token_hint=id_token_hint)
+    if not params:
         return None
-    if not id_token_hint or not id_token_hint_usable(id_token_hint, settings):
-        return None
-    end_session = f"{settings.issuer}end-session/"
-    params = {
-        "client_id": settings.client_id,
-        "id_token_hint": id_token_hint,
-        "post_logout_redirect_uri": post_logout_url,
-    }
+    end_session = f"{settings.issuer.rstrip('/')}/end-session/"
     return f"{end_session}?{urlencode(params)}"
 
 
-def oidc_post_logout_url(settings: OidcSettings) -> str:
+_MAX_LOGOUT_GET_URL_LEN = 1800
+_MAX_LOGOUT_GET_ID_TOKEN_LEN = 400
+
+
+def oidc_logout_completion_response(
+    settings: OidcSettings,
+    post_logout_url: str,
+    *,
+    id_token_hint: str | None = None,
+) -> Response:
+    from markupsafe import escape
+
+    params = oidc_logout_params(settings, post_logout_url, id_token_hint=id_token_hint)
+    if not settings.issuer or not params:
+        return redirect(post_logout_url or url_for("index"))
+    end_session = f"{settings.issuer.rstrip('/')}/end-session/"
+    query = urlencode(params)
+    logout_url = f"{end_session}?{query}" if query else end_session
+    if len(logout_url) <= _MAX_LOGOUT_GET_URL_LEN and (
+        not id_token_hint or len(id_token_hint) <= _MAX_LOGOUT_GET_ID_TOKEN_LEN
+    ):
+        return redirect(logout_url)
+    inputs = "".join(
+        f'<input type="hidden" name="{escape(k)}" value="{escape(v)}">'
+        for k, v in params.items()
+    )
+    body = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Signing out…</title></head>
+<body>
+  <p>Signing out…</p>
+  <form id="logout" method="get" action="{escape(end_session)}">{inputs}</form>
+  <script>document.getElementById("logout").submit();</script>
+</body>
+</html>"""
+    return Response(body, mimetype="text/html")
+
+
+def _app_home_from_redirect(settings: OidcSettings) -> str:
     parsed = urlparse(settings.redirect_uri)
     if parsed.scheme and parsed.netloc:
         return f"{parsed.scheme}://{parsed.netloc}/"
     return url_for("index", _external=True)
+
+
+def oidc_post_logout_url(settings: OidcSettings) -> str:
+    """App home URL registered with Authentik (derived from OIDC redirect_uri)."""
+    return _app_home_from_redirect(settings)
+
+
+def oidc_post_logout_uri(request, settings: OidcSettings) -> str:
+    """Post-logout redirect registered with Authentik (/oidc/logout/done on request host)."""
+    host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or ""
+    ).strip()
+    if not host:
+        return f"{_app_home_from_redirect(settings).rstrip('/')}/oidc/logout/done"
+
+    redirect_parsed = urlparse(settings.redirect_uri)
+    redirect_host = (redirect_parsed.netloc or "").lower()
+    host_only = host.split(":")[0].lower()
+    if redirect_host:
+        allowed = {redirect_host, redirect_host.split(":")[0]}
+        if host.lower() not in allowed and host_only not in allowed:
+            return f"{_app_home_from_redirect(settings).rstrip('/')}/oidc/logout/done"
+
+    proto = (
+        request.headers.get("x-forwarded-proto") or redirect_parsed.scheme or "https"
+    ).split(",")[0].strip()
+    return f"{proto}://{host}/oidc/logout/done"
 
 
 def authentik_admin_url(settings: OidcSettings) -> str:

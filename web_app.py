@@ -558,8 +558,8 @@ from oidc_auth import (
     break_glass_login,
     init_oidc,
     load_oidc_settings,
-    oidc_logout_redirect,
-    oidc_post_logout_url,
+    oidc_logout_completion_response,
+    oidc_post_logout_uri,
     register_oidc_routes,
 )
 
@@ -688,13 +688,12 @@ def pending_approval():
 @login_required
 def logout():
     id_token_hint = session.get("oidc_id_token")
+    post = oidc_post_logout_uri(request, OIDC)
     logout_user()
     session.clear()
-    post = oidc_post_logout_url(OIDC)
-    end = oidc_logout_redirect(OIDC, post, id_token_hint=id_token_hint)
-    if end:
-        return redirect(end)
-    return redirect(url_for("index"))
+    if not OIDC.enabled:
+        return redirect(url_for('login'))
+    return oidc_logout_completion_response(OIDC, post, id_token_hint=id_token_hint)
 
 
 @app.route("/admin/users", methods=["GET", "POST"])
