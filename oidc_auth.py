@@ -388,6 +388,14 @@ _MAX_LOGOUT_GET_URL_LEN = 1800
 _MAX_LOGOUT_GET_ID_TOKEN_LEN = 400
 
 
+def _app_display_name() -> str:
+    doc = (__doc__ or "").strip()
+    prefix = "Authentik OIDC login for "
+    if doc.startswith(prefix):
+        return doc[len(prefix) :].rstrip(".")
+    return "application"
+
+
 def oidc_logout_completion_response(
     settings: OidcSettings,
     post_logout_url: str,
@@ -400,12 +408,8 @@ def oidc_logout_completion_response(
     if not settings.issuer or not params:
         return redirect(post_logout_url or url_for("index"))
     end_session = f"{settings.issuer.rstrip('/')}/end-session/"
-    query = urlencode(params)
-    logout_url = f"{end_session}?{query}" if query else end_session
-    if len(logout_url) <= _MAX_LOGOUT_GET_URL_LEN and (
-        not id_token_hint or len(id_token_hint) <= _MAX_LOGOUT_GET_ID_TOKEN_LEN
-    ):
-        return redirect(logout_url)
+    home = escape(_app_home_from_redirect(settings), quote=True)
+    app_name = escape(_app_display_name())
     inputs = "".join(
         f'<input type="hidden" name="{escape(k)}" value="{escape(v)}">'
         for k, v in params.items()
@@ -416,6 +420,7 @@ def oidc_logout_completion_response(
 <body>
   <p>Signing out…</p>
   <form id="logout" method="get" action="{escape(end_session)}">{inputs}</form>
+  <p><a href="{home}">Return to {app_name}</a></p>
   <script>document.getElementById("logout").submit();</script>
 </body>
 </html>"""
