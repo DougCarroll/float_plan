@@ -1,4 +1,4 @@
-"""Authentik OIDC login for Boat Monitor."""
+"""Authentik OIDC login for Float Plan."""
 from __future__ import annotations
 
 import base64
@@ -7,6 +7,7 @@ import os
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
@@ -17,12 +18,12 @@ from flask import Flask, current_app, flash, redirect, request, session, url_for
 from flask_login import current_user, login_user
 from werkzeug.wrappers import Response
 
-from models import User, db
-
 DEFAULT_GROUP_ADMINS = "boat-admins"
 DEFAULT_GROUP_CREW = "boat-crew"
 DEFAULT_GROUP_VIEWERS = "boat-viewers"
 DEFAULT_GROUP_PENDING = "boat-pending"
+
+oauth = OAuth()
 
 
 @dataclass(frozen=True)
@@ -42,16 +43,27 @@ class OidcSettings:
     break_glass_password: str
 
 
-oauth = OAuth()
-
-
 def _env_truthy(name: str) -> bool:
     return str(os.environ.get(name) or "").strip().lower() in ("1", "true", "yes", "on")
 
 
-def load_oidc_settings(config: dict[str, Any]) -> OidcSettings:
-    web = config.get("web") or {}
-    public_base = str(web.get("public_base_url") or "").strip().rstrip("/")
+def _load_yaml_config() -> dict[str, Any]:
+    config_path = Path(__file__).resolve().parent / "config.yaml"
+    if not config_path.is_file():
+        return {}
+    import yaml
+
+    with open(config_path, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    return data if isinstance(data, dict) else {}
+
+
+def load_oidc_settings(config: dict[str, Any] | None = None) -> OidcSettings:
+    cfg = config if config is not None else _load_yaml_config()
+    web = cfg.get("web") or {}
+    public_base = str(
+        web.get("public_base_url") or web.get("base_url") or ""
+    ).strip().rstrip("/")
     redirect_uri = str(os.environ.get("OIDC_REDIRECT_URI") or "").strip()
     if not redirect_uri and public_base:
         redirect_uri = f"{public_base}/oidc/callback"
@@ -138,7 +150,7 @@ def init_oidc(app: Flask, settings: OidcSettings) -> None:
     if not all([settings.client_id, settings.client_secret, settings.issuer, settings.redirect_uri]):
         raise RuntimeError(
             "OIDC_ENABLED=1 requires OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_ISSUER, "
-            "and OIDC_REDIRECT_URI (or web.public_base_url in config.yaml)."
+            "and OIDC_REDIRECT_URI (or web.base_url / web.public_base_url in config.yaml)."
         )
     oauth.init_app(app)
     meta = _oidc_server_metadata(settings.issuer)
@@ -191,7 +203,9 @@ def _session_lifetime_for_group(group: str) -> timedelta:
     return timedelta(days=7)
 
 
-def upsert_user_from_oidc(settings: OidcSettings, claims: dict[str, Any]) -> User:
+def upsert_user_from_oidc(settings: OidcSettings, claims: dict[str, Any]):
+    from web_app import User, db
+
     sub = str(claims.get("sub") or "").strip()
     username = _username_from_claims(claims)
     groups = _groups_from_claims(claims)
@@ -222,7 +236,7 @@ def _safe_next_url() -> str | None:
     return None
 
 
-def _login_flask_user(user: User, *, remember: bool = True) -> None:
+def _login_flask_user(user, *, remember: bool = True) -> None:
     session.permanent = True
     current_app.permanent_session_lifetime = _session_lifetime_for_group(
         str(getattr(user, "group", "") or "crew")
@@ -281,13 +295,15 @@ def register_oidc_routes(
         stash_oidc_id_token(token, settings)
         nxt = _safe_next_url()
         return redirect(nxt or url_for("index"))
-
     @app.route("/oidc/logout/done")
     def oidc_logout_done() -> Response:
         return redirect(url_for("index"))
 
 
-def break_glass_login(settings: OidcSettings, username: str, password: str) -> User | None:
+
+def break_glass_login(settings: OidcSettings, username: str, password: str):
+    from web_app import User, db
+
     if not settings.break_glass_enabled:
         return None
     if username != settings.break_glass_username:
@@ -304,6 +320,7 @@ def break_glass_login(settings: OidcSettings, username: str, password: str) -> U
         user.group = "admin"
         db.session.commit()
     return user
+
 
 
 def _b64url_json(segment: str) -> dict[str, Any]:
