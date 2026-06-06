@@ -408,7 +408,7 @@ def oidc_logout_completion_response(
     if not settings.issuer or not params:
         return redirect(post_logout_url or url_for("index"))
     end_session = f"{settings.issuer.rstrip('/')}/end-session/"
-    home = html.escape(_app_home_from_redirect(settings), quote=True)
+    login_url = html.escape(_app_login_url(settings), quote=True)
     app_name = html.escape(_app_display_name())
     inputs = "".join(
         f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(v)}">'
@@ -421,11 +421,19 @@ def oidc_logout_completion_response(
 <body>
   <p>Signing out…</p>
   <form id="logout" method="get" action="{action}">{inputs}</form>
-  <p><a href="{home}">Return to {app_name}</a></p>
+  <p><a href="{login_url}">Return to {app_name}</a></p>
   <script>document.getElementById("logout").submit();</script>
 </body>
 </html>"""
-    return Response(body, mimetype="text/html")
+    from flask import make_response
+
+    return make_response(body)
+
+
+def clear_app_session_after_logout() -> None:
+    """Remove OIDC/app keys without undoing Flask-Login's remember-me clear marker."""
+    for key in ("oidc_id_token", "oidc_next"):
+        session.pop(key, None)
 
 
 def _app_home_from_redirect(settings: OidcSettings) -> str:
@@ -433,6 +441,13 @@ def _app_home_from_redirect(settings: OidcSettings) -> str:
     if parsed.scheme and parsed.netloc:
         return f"{parsed.scheme}://{parsed.netloc}/"
     return url_for("index", _external=True)
+
+
+def _app_login_url(settings: OidcSettings) -> str:
+    parsed = urlparse(settings.redirect_uri)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}/login"
+    return url_for("login", _external=True)
 
 
 def oidc_post_logout_url(settings: OidcSettings) -> str:
