@@ -402,24 +402,25 @@ def oidc_logout_completion_response(
     *,
     id_token_hint: str | None = None,
 ) -> Response:
-    from markupsafe import escape
+    import html
 
     params = oidc_logout_params(settings, post_logout_url, id_token_hint=id_token_hint)
     if not settings.issuer or not params:
         return redirect(post_logout_url or url_for("index"))
     end_session = f"{settings.issuer.rstrip('/')}/end-session/"
-    home = escape(_app_home_from_redirect(settings), quote=True)
-    app_name = escape(_app_display_name())
+    home = html.escape(_app_home_from_redirect(settings), quote=True)
+    app_name = html.escape(_app_display_name())
     inputs = "".join(
-        f'<input type="hidden" name="{escape(k)}" value="{escape(v)}">'
+        f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(v)}">'
         for k, v in params.items()
     )
+    action = html.escape(end_session, quote=True)
     body = f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><title>Signing out…</title></head>
 <body>
   <p>Signing out…</p>
-  <form id="logout" method="get" action="{escape(end_session)}">{inputs}</form>
+  <form id="logout" method="get" action="{action}">{inputs}</form>
   <p><a href="{home}">Return to {app_name}</a></p>
   <script>document.getElementById("logout").submit();</script>
 </body>
